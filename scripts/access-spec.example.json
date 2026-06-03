@@ -1,0 +1,26 @@
+{
+  "_comment": "Example access-control / IDOR spec for AccessScannerMain. Copy to a gitignored *.local.json, fill in REAL credentials/sessions (never commit them), and point the cases at endpoints you are authorized to test. An identity may carry a pre-captured `cookie`/`headers`, OR a `login` the scanner performs (it submits that one form per the §5 carve-out; fields are detected deterministically). Confirmed when a request as `identity` returns 2xx containing `mustContain`. identity: null = unauthenticated. Targets the local scripts/vuln-target.py.",
+  "identities": {
+    "alice": {
+      "login": {
+        "loginUrl": "http://localhost:8123/login",
+        "username": "alice",
+        "password": "secret"
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "IDOR: alice reads another account",
+      "url": "http://localhost:8123/account?id=1002",
+      "identity": "alice",
+      "mustContain": "user1002@example.com"
+    },
+    {
+      "name": "Missing auth: admin panel without a session",
+      "url": "http://localhost:8123/admin",
+      "identity": null,
+      "mustContain": "admin panel"
+    }
+  ]
+}

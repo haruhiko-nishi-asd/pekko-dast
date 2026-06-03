@@ -1,0 +1,457 @@
+English | [日本語](README.ja.md)
+
+# pekko-dast
+
+A browser-driven, LLM-directed **dynamic application security testing (DAST)** engine built on [Apache Pekko](https://pekko.apache.org/) and [Playwright](https://playwright.dev/java/). It scans one authorized URL (or crawls a seed and scans each in-scope URL), composing deterministic security checks with execution-confirmed active probes, and emits structured, reproducible findings.
+
+It drives a real Chromium browser where one is needed (capture, XSS execution, authenticated SPA navigation and login) and plain HTTP where it is not (open redirect, SQLi, SSRF, IDOR confirmation). Two stances hold throughout: it is **observe-only until you authorize a host** (active probing is gated by `ConsentGate` on `DAST_AUTHORIZED_HOSTS`), and **the model only proposes; deterministic code confirms** (the LLM fills a closed tool schema, never authors executed code, and no finding exists without a deterministic confirmation). To run it, jump to [Running a scan](#running-a-scan).
+
+---
+
+## What it finds
+
+| Check | Kind | Tier | Confirmation | Browser? | LLM? |
+|---|---|---|---|---|---|
+| Insecure cookies | `InsecureCookie` | deterministic | cookie flags read over CDP | yes (capture) | no |
+| Secrets in storage | `SecretInStorage` | deterministic | key/value classification | yes (capture) | no |
+| Missing security headers | `MissingSecurityHeader` | deterministic | response headers read | yes (capture) | no |
+| Open redirect | `OpenRedirect` | active, gated | no-follow request, `Location` targets a sentinel | no (HTTP) | no |
+| SQL injection | `SqlInjection` | active, gated | error signature vs baseline, or re-tested time delay | no (HTTP) | no |
+| SSRF | `Ssrf` | active, gated | out-of-band callback to a listener we control | no (HTTP) | no |
+| Reflected XSS | `Xss` | active, gated | payload executes in the browser (marker fires) | yes | yes (directs) |
+| DOM XSS (sink reach) | `Xss` | active, gated | injected marker reaches a dangerous DOM sink | yes | no |
+| Access control / IDOR (spec) | `BrokenAccessControl` | active, gated, assisted | request as an identity returns restricted data | no (HTTP) | no |
+| IDOR (LLM-planned) | `BrokenAccessControl` | active, gated | a record that is not the caller's own comes back | login + nav | yes (plans, navigates) |
+
+---
+
+## How each check works
+
+Every active check is gated first: `ConsentGate` permits a probe only when the target host is in `DAST_AUTHORIZED_HOSTS`, otherwise the run is observe-only. The diagrams below assume that gate has passed.
+
+### Capture-based deterministic checks (cookies, storage, headers)
+
+**The attacks.** Three weaknesses a single page load can reveal:
+
+- **Insecure cookies.** A session cookie without `HttpOnly` is readable by JavaScript (so any XSS steals the session); without `Secure` it can leak over plain HTTP; without `SameSite` it rides along on cross-site requests (a CSRF enabler).
+- **Secrets in storage.** Apps that stash JWTs, API keys, or access tokens in `localStorage` / `sessionStorage` expose them to any script on the page, unlike an `HttpOnly` cookie. One XSS reads them all.
+- **Missing security headers.** Absent `Content-Security-Policy`, `Strict-Transport-Security`, `X-Content-Type-Options`, `Referrer-Policy`, or anti-framing leaves the page without standard defence-in-depth.
+
+**How the tool checks them.** All three are deterministic and read off **one** passive capture. `CaptureOp` loads the page and records an immutable `ClientStateSnapshot` (response headers, cookies with their flags via CDP, and the storage maps). No model, no extra requests, no authorization needed (a normal visit already sees all of this). `Tier1.run` then applies three pure functions: `CookieFlagCheck` (a finding per cookie missing a flag), `SecretInStorageCheck` (classifies each stored value by JWT structure, entropy, and known token shapes, so it flags likely secrets without flagging every base64 blob), and `SecurityHeaderCheck` (flags only fully-absent headers, to keep false positives near zero). Every finding is `reproducible = true`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant O as ScanOrchestrator
+    participant P as Browser pool (pinned thread)
+    participant T as Target
+    O->>P: CaptureOp(url)
+    P->>T: navigate(url), wait for load
+    T-->>P: response headers + Set-Cookie + page
+    P->>P: read cookies and flags over CDP, dump localStorage / sessionStorage
+    P-->>O: ClientStateSnapshot (immutable data, no behaviour)
+    Note over O: Tier 1, pure functions, no model, no extra requests
+    O->>O: CookieFlagCheck, cookie missing HttpOnly / Secure / SameSite?
+    O->>O: SecretInStorageCheck, classify each value (JWT / entropy / token shape)
+    O->>O: SecurityHeaderCheck, required header fully absent?
+    O-->>O: Findings (reproducible = true)
+```
+
+### Open redirect
+
+**The attack.** An open redirect is when the app bounces the browser to a URL taken from a request parameter (`?next=`, `?url=`, `?returnTo=`, and many other names) without checking it stays on-site. The link **begins on the trusted domain** and lands on the attacker's, which powers convincing phishing and can leak OAuth tokens through a manipulated `redirect_uri`. On its own it is a stepping stone, so it rates `Medium`.
+
+**How the tool checks it.** Pure HTTP, no browser. For each query parameter already in the URL, `OpenRedirectProbe` injects a sentinel host (`dast-redirect-probe.example`, a reserved non-resolving TLD, so the probe never actually leaves the target) in two shapes: an absolute `https://sentinel/` and a scheme-relative `//sentinel/` (the second defeats naive `startsWith("/")` allow-listing). It sends the request with redirect-following **disabled** and reads the `Location` header; if its host is the sentinel, that parameter controls an off-origin redirect. It is parameter-name-agnostic and tests only params already present in the URL.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant H as OpenRedirectProbe
+    participant T as Target
+    Note over H: per query parameter, redirects disabled
+    H->>T: GET ...?param=https://dast-redirect-probe.example/
+    T-->>H: 3xx Location header
+    H->>H: Location host == sentinel? (absolute form)
+    alt not yet confirmed
+        H->>T: GET ...?param=//dast-redirect-probe.example/
+        T-->>H: 3xx Location header
+        H->>H: Location host == sentinel? (scheme-relative form)
+    end
+    H-->>H: OpenRedirect (Medium) if a payload pointed off-origin, else none
+```
+
+### SQL injection
+
+**The attack.** When user input is concatenated into a SQL query instead of parameterised, an attacker can change the query itself: read other rows, dump tables, log in as someone else, or worse. Two tells betray it without needing to see the data: a stray quote breaks the query (the page returns a **database error**), or an injected `SLEEP` / `pg_sleep` makes the response take measurably **longer**.
+
+**How the tool checks it.** Pure HTTP. Per query parameter, against a baseline request, `SqlInjectionProbe` tries two confirmations in order:
+
+1. **Error-based.** Inject a quote; confirm if a known DB error signature appears in the response that was **absent from the baseline** (the baseline comparison avoids flagging an error the page always shows).
+2. **Time-based** (only if error-based did not fire). Send a DB-specific sleep payload; confirm only if the injected request is slower than baseline by a threshold **and a re-test is also slow** (one slow response is noise, two is the payload).
+
+First technique to confirm per parameter wins; a failed request never fabricates a hit.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant H as SqlInjectionProbe
+    participant T as Target
+    Note over H: per query parameter
+    H->>T: baseline request (original value)
+    T-->>H: baseline body + time
+    H->>T: error payload (inject a quote)
+    T-->>H: body
+    alt DB error signature present now AND absent from baseline
+        H-->>H: SqlInjection (error-based)
+    else no new error signature
+        H->>T: time payload (DB-specific sleep)
+        T-->>H: response (timed)
+        alt slower than baseline by threshold
+            H->>T: re-test the same payload
+            T-->>H: response (timed)
+            opt also slow the second time
+                H-->>H: SqlInjection (time-based)
+            end
+        end
+    end
+```
+
+### SSRF (out-of-band confirmation)
+
+**Server-Side Request Forgery** is when an attacker gets the *server* to make a request to a destination they choose. The danger is where the server sits: it can reach internal-only services (`http://localhost/...` admin panels, databases), cloud metadata (`http://169.254.169.254/...`, which hands back IAM credentials), and its requests sail past firewalls and IP allow-lists because they originate from the trusted server. Common sink parameters: `url`, `uri`, `src`, `dest`, `image`, `webhook`, `callback`, `proxy`.
+
+Most SSRF is **blind**: the server makes the request but returns nothing observable, so inspecting the response body is unreliable. The only honest signal is **out-of-band**. Give the target a URL pointing at a listener we control, carrying a unique token, and watch whether our listener gets hit. If it does, the server demonstrably fetched an attacker-chosen URL.
+
+### The flow, end to end
+
+1. **Setup, once per scan.** `Scanner.buildOast` reads `DAST_OAST_BASE_URL`, binds an `OastListener` at that host and port *before any probe runs*, and wires it in as the `ssrfScan` effect. That one listener is long-lived and shared across every URL and parameter in the scan. The base URL must be reachable by the target (loopback for a local target, a public or tunnelled address for a hosted one). If the variable is unset, `ssrfScan` is a no-op and SSRF is skipped, never guessed.
+2. **Gate, per target URL.** After capture and the Tier-1 checks, `ScanOrchestrator` asks `ConsentGate` whether the host is in `DAST_AUTHORIZED_HOSTS`. Observe-only (host not authorized) skips all active probes, SSRF included.
+3. **Run, when authorized.** The three browser-free HTTP probes (open redirect, SQLi, SSRF) fire together; `ssrfScan(target)` calls `SsrfProbe.scan(target, listener)`.
+4. **Probe, per query parameter** (parameter-name-agnostic): mint a unique token, inject `baseUrl/token` into that parameter, fire a GET at the target, and **discard the response** (blind SSRF leaks nothing there). Then poll `listener.saw(token)` up to 16 times at 500ms (about an 8-second window for a slow server-side fetch).
+5. **Confirm.** If the target's server fetched the callback, the shared listener already recorded the token; the poll sees it and emits a `High` finding whose replay handle is the token. No callback within the window means no finding. The unique-per-parameter token attributes any callback to exactly that input.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Sc as Scanner (startup)
+    participant O as ScanOrchestrator
+    participant Pr as SsrfProbe
+    participant L as OastListener
+    participant Tg as Target server
+
+    Note over Sc,L: setup, once per scan
+    Sc->>L: buildOast(): read DAST_OAST_BASE_URL, bind host:port
+    L-->>Sc: listening (shared across all URLs and params)
+    Note over Sc: if DAST_OAST_BASE_URL is unset, SSRF is skipped
+
+    Note over O,Tg: per target URL
+    O->>O: capture + Tier 1 (always)
+    O->>O: ConsentGate, is host in DAST_AUTHORIZED_HOSTS?
+    alt authorized (active scope)
+        O->>Pr: ssrfScan(target), alongside redirect + SQLi
+        loop each query parameter
+            Pr->>Pr: token = fresh(), callback = baseUrl/token
+            Pr->>Tg: GET ...?param=<callback>
+            Tg-->>Pr: response (discarded, blind)
+            opt server is vulnerable
+                Tg->>L: GET /<token> (out-of-band, server-side)
+                L->>L: record token
+            end
+            loop poll up to 16 times, every 500ms
+                Pr->>L: saw(token)?
+                L-->>Pr: yes / no
+            end
+            Pr-->>O: Ssrf finding (High) if token seen, else none
+        end
+    else observe-only (host not authorized)
+        O->>O: skip all active probes (no SSRF)
+    end
+```
+
+**Limitations:** existing query parameters only (no body or path SSRF, no parameter discovery), GET with an HTTP callback only (SSRF that triggers only a DNS lookup is not caught), the poll window can miss a very slow server-side fetch, and it confirms the vulnerability but does not escalate it (no metadata read or internal port scan).
+
+### Reflected XSS (the LLM directs; the browser confirms)
+
+**The attack.** Reflected cross-site scripting: the app echoes a request parameter back into the page without encoding it, so an attacker-crafted value becomes live script in the victim's browser. It can steal cookies and tokens, act as the user, or rewrite the page. "Reflected" means the payload travels in the request (a crafted link the victim clicks), not stored on the server.
+
+**How the tool checks it.** This is the one check the model *directs*, but it never authors code. `ClaudeAnalyzer` sends the page context and forces the closed `decide` tool; the model may return `Probe(injectionPoint, payloadId)`, where `payloadId` indexes an **audited `PayloadLibrary`** (the model picks an id, never payload text). `DecisionParser` rejects anything off-menu and fails closed to `Done`. Then the deterministic part runs on the browser thread: `ProbeOp` installs a confirm hook (`window.__dastConfirm(marker)` pushes a unique marker), navigates with the chosen payload injected at the point, and reads back `window.__dastFired`. A finding exists **only if the probe's marker is in the fired set**, that is, the payload actually executed. The replay handle is the injection point plus payload id, so it reproduces with no model call.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant O as ScanOrchestrator
+    participant A as ClaudeAnalyzer / LlmClient
+    participant M as Model
+    participant DP as DecisionParser
+    participant P as Browser pool
+    participant T as Target
+    O->>A: page context (injection points, storage keys)
+    A->>M: force the decide tool (closed schema)
+    M-->>A: { kind: probe, injectionPointId, payloadId }
+    A->>DP: parse, reject off-menu, fail closed to Done
+    DP-->>O: LlmDecision.Probe(point, payloadId)
+    Note over O,P: payloadId indexes an audited PayloadLibrary, not model text
+    O->>P: ProbeOp(point, payloadId, unique marker)
+    P->>P: install confirm hook (window.__dastConfirm pushes the marker)
+    P->>T: navigate with the payload injected at the point
+    T-->>P: page runs, and if the payload executes it calls the hook
+    P->>P: read window.__dastFired
+    P-->>O: Xss (High) only if this probe's marker fired
+```
+
+### DOM XSS (sink reach)
+
+**The attack.** DOM-based XSS happens entirely client-side: the page's own JavaScript reads attacker-influenceable input (the URL fragment, query string, `postMessage`, the "source") and writes it into a dangerous "sink" (`innerHTML`, `eval`, `document.write`, string `setTimeout`, `location`) without sanitising it. No server reflection is involved, so server-side checks miss it entirely.
+
+**How the tool checks it.** By **taint observation**, not by firing a payload. `SinkScanOp` installs an init script that wraps the dangerous sinks so each records its name if it ever receives a value containing a **unique, benign, alphanumeric marker** (inert: no markup, no state change). It delivers that marker through a source (the URL fragment), lets the page's own JS run, then reads back `window.__dastSinks`. If the app routed the marker from the source into a sink, that source-to-sink flow is a reproducible DOM-XSS indicator. The marker only proves *reachability*, which is why it stays benign rather than executable. Replay is source plus sink.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant O as ScanOrchestrator
+    participant P as Browser pool
+    participant T as Target
+    O->>P: SinkScanOp(source = URL fragment, unique marker)
+    P->>P: install hooks wrapping innerHTML / eval / document.write / setTimeout / location
+    P->>T: navigate with the marker in the source (e.g. #<marker>)
+    T-->>P: the page's own JS runs
+    P->>P: a wrapped sink received the marker? record its name in __dastSinks
+    P-->>O: Xss (DOM, High) per sink the marker reached, else none
+```
+
+### Access control / IDOR (operator spec, assisted)
+
+**The attack.** Broken access control is when the app fails to check that the caller is allowed to do what they asked. **IDOR** (Insecure Direct Object Reference) is the common form: change an id in a request (`/account?id=123` to `124`) and get someone else's data. Related shapes are a low-privilege user reaching an admin URL, or an unauthenticated request reaching a protected page.
+
+**How the tool checks it.** This is the one **assisted** check, because a scanner cannot know what *should* be restricted. The operator supplies a JSON spec of identities (each a captured `cookie` / `headers`, or a `login` form the scanner submits once to mint a session) and assertion cases. A case says: requesting `url` AS `identity` (or unauthenticated) must NOT return `mustContain`, a discriminator string proving restricted data came back. `AccessControlProbe` sends one request per case under that identity's credentials, with **redirect-following disabled** (so a bounce to a login page reads as denied, not as success), each gated by `ConsentGate`. A finding is confirmed only on a **2xx whose body contains the discriminator**. Replay is the case name, identity, and URL.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as AccessControlProbe
+    participant T as Target
+    Note over A: identities + cases from the operator spec
+    loop each case (url, identity, mustContain)
+        A->>A: ConsentGate, is the case host authorized?
+        A->>T: GET url with that identity's cookie/headers (no redirect follow)
+        T-->>A: status + body
+        A->>A: 2xx AND body contains the discriminator?
+        A-->>A: BrokenAccessControl (High) if so (restricted data returned)
+    end
+```
+
+### IDOR (LLM-planned and LLM-navigated)
+
+**The attack.** The same broken-access-control class, but in the hard setting where the spec approach cannot reach: object ids are **non-guessable** (random ULIDs / UUIDs, so you cannot enumerate `123` to `124`), and the vulnerable endpoints are **not obvious** (a single-page app's XHR / fetch API that a link crawl never sees). To test it you need *real* ids belonging to a different user, and you need to reach the pages and API calls that carry them.
+
+**How the tool checks it.** This is the one place the model is genuinely load-bearing. From a login (the authenticated-scan carve-out) the scanner reaches object-bearing pages two ways: `AuthCrawl` (a deterministic same-host link crawl) and `NavLoop` (the model picks ONE indexed step per hop, follow a link or submit a form, to reach listings a crawl misses). Every submission passes `ActionGuard`: GET always, POST only when the model flags it safe **and** a destructive-pattern deny-list passes (the model's verdict is necessary but never sufficient). For SPA targets the browser also records the XHR / fetch endpoints the app calls. A planner (`IdorPlanner` / `ContentIdorPlanner`) then proposes, **from ids it actually observed**, a parameter, the caller's own value, candidate ids (from a second account, in the two-identity flow), and the per-user discriminator field. `IdorProbe` / `ContentIdorProbe` confirms deterministically: baseline the caller's own value, then for each candidate check whether the response is 2xx and the discriminator field comes back **present and different** from the caller's own (someone else's record). The model cannot fabricate a finding (a secured endpoint yields no diff) and cannot fire a destructive action (the deny-list floor). Replay is the parameter, value, and field, no model needed.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant S as Idor / SpaIdor scanner
+    participant B as Browser nav session
+    participant M as Model (navigator + planner)
+    participant T as Target
+    S->>B: log in (one configured form, ActionGuard-fenced)
+    loop bounded hops to reach object-bearing pages
+        B->>M: current page, indexed links + forms
+        M-->>B: follow link N, or submit form N (POST only if safe + deny-list passes)
+        B->>T: request, recording XHR / fetch endpoints
+        T-->>B: page + API responses (real ids observed)
+    end
+    B-->>S: visited pages + observed requests
+    S->>M: propose tests from observed ids
+    M-->>S: param, own id, candidate ids (others'), discriminator field
+    Note over S,T: deterministic confirmation, model not consulted again
+    S->>T: GET param = own id (baseline, as the attacker)
+    T-->>S: own discriminator value
+    loop each candidate id, as the attacker
+        S->>T: GET param = candidate id
+        T-->>S: body
+        S->>S: 2xx AND discriminator present AND not equal to own?
+    end
+    S-->>S: BrokenAccessControl (High) only on a confirmed cross-identity read
+```
+
+A finding carries kind, severity, evidence, a `reproducible` flag, and a `replay` handle that reproduces it without the model (for example `header:content-security-policy@<url>`).
+
+---
+
+## Architecture
+
+Playwright Java's driver is single-threaded, so the browser is hosted on a **thread-affine resource pool**; the rest of the engine is the deterministic checks and the LLM seam the diagrams above reference.
+
+- **`ResourcePool[R]` / `ResourceSession[R]`** (`src/main/scala/crawler/pool`) - a generic node-local pool. Each session owns one `AutoCloseable` resource on its own `PinnedDispatcher` thread and runs all submitted work there; callers get a typed `Future[T]` via `pool.submit`. Total Chromium processes equal the pool size regardless of scan concurrency, and every Playwright call stays on the thread that created the browser.
+- **`BrowserResource`** (`src/main/scala/crawler/BrowserResource.scala`) - one Playwright + Chromium pinned to one thread. Identifiable launch (a `pekko-dast-scanner` user agent and `X-Scanner` header, not stealth), the `withPage` capture op, and a persistent `nav*` session for cookie/login-driven multi-hop SPA navigation.
+- **`dast.analyzer.LlmClient`** - the single boundary to any model: `callTool(system, user, ToolSpec, maxTokens) -> Option[tool-input]`, fail-closed to `None`. Implementations for Anthropic (default), OpenAI, and Gemini, chosen by `DAST_LLM_PROVIDER`. Because it returns only tool arguments and confirmation is deterministic, provider choice affects recall, not soundness.
+- **`dast.scan.*`** - orchestration: per-URL scan, site crawl, and the IDOR flows, with `Authorization`/`ConsentGate` enforcing scope.
+
+A note on weight: Pekko is heavier than scanning a handful of URLs strictly needs. It buys clean concurrency and the pinned-thread invariant; a simpler runtime would also serve.
+
+---
+
+## What is validated, and what is not
+
+- **Validated live (against a consenting or local target):** insecure cookies, reflected XSS, open redirect, error-based SQLi, out-of-band SSRF, and access control / IDOR, confirmed end to end against `scripts/vuln-target.py` (which exposes `/?q=` XSS, `/redirect?next=` open redirect, `/item?id=` SQLi, `/fetch?url=` SSRF, `/account?id=` IDOR, and `/admin` missing auth).
+- **Unit tested (pure logic):** every check's decision logic, the decision parser, scope/frontier, the orchestration loop with stubbed effects, and each LLM provider's request builder and response parser.
+- **Live-only (stated, not unit tested):** the browser-driving ops, the HTTP probers, the OAST listener, and the live model calls. Only the Anthropic client has run against a real endpoint; the OpenAI and Gemini clients are wired and parse-tested but not yet exercised live.
+- **Implemented and unit tested, not observed firing live:** time-based SQLi and the DOM sink-scan.
+
+---
+
+## Running a scan
+
+> Only scan systems you are authorized to test. Active probing happens only against hosts you list in `DAST_AUTHORIZED_HOSTS`; everything else is observe-only (read cookies, storage, and response headers, nothing more).
+
+### Prerequisites
+
+- JDK 21+ and sbt 1.10+ (Scala 3 / Pekko / Playwright are managed by the build).
+- First run downloads Chromium into `~/.cache/ms-playwright` (a few minutes, instant thereafter).
+
+### Configure `.env`
+
+Create `.env` in the repo root. `DastConfig` reads it as `KEY=VALUE` (resolution order: real env var, then `.env`, then JVM `-D` property), so no `export` is needed. `.env` is gitignored; keep secrets in it.
+
+```dotenv
+ANTHROPIC_API_KEY=sk-ant-...
+DAST_AUTHORIZED_HOSTS=target.example
+# DAST_OAST_BASE_URL=http://your-oast-listener
+# DAST_LLM_PROVIDER=anthropic   # or: openai (OPENAI_API_KEY) / gemini (GEMINI_API_KEY)
+```
+
+| Key | Default | Used by | Meaning |
+|---|---|---|---|
+| `DAST_LLM_PROVIDER` | `anthropic` | all LLM-directed steps | Which API the planners call: `anthropic` / `openai` / `gemini`. |
+| `ANTHROPIC_API_KEY` | (none) | analyzer, IDOR/nav planners | LLM-directed steps (XSS direction, IDOR planning, nav). Absent: those steps fail closed and are skipped; deterministic checks still run. |
+| `ANTHROPIC_MODEL` | `claude-opus-4-8` | analyzer, planners | Model id (when provider is `anthropic`). |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | (none) / `gpt-4o` | when provider is `openai` | OpenAI key and model. |
+| `GEMINI_API_KEY` / `GEMINI_MODEL` | (none) / `gemini-2.0-flash` | when provider is `gemini` | Gemini key and model. |
+| `DAST_AUTHORIZED_HOSTS` | (none -> observe-only) | all scanner mains | Comma-separated hosts that may be actively probed. |
+| `DAST_OAST_BASE_URL` | (none -> SSRF skipped) | SSRF check | Base URL of an out-of-band listener the target can call back to. |
+| `DAST_ACCESS_SPEC` | (none) | Access / Idor / SpaIdor mains | Fallback spec path if you do not pass one as an argument. |
+| `DAST_NAV_TIMEOUT_MS` | `30000` | mains that navigate | Per-navigation timeout. |
+| `DAST_MAX_PAGES` | `20` | Site, Idor | Crawl page cap. |
+| `DAST_MAX_DEPTH` | `2` | Site, Idor | Crawl depth. |
+| `DAST_MAX_HOPS` | `4` (Idor) / `6` (SpaIdor) | Idor, SpaIdor | LLM navigation hops. |
+| `DAST_POST_BUDGET` | `3` | Idor, SpaIdor | Max POST navigation actions per run. |
+| `DAST_MAX_CONCURRENCY` | `4` | global HTTP throttle | In-flight request cap against the target (backpressure). |
+
+Switching provider is a config change, not code (all three go through the one `LlmClient` seam), and because confirmation is deterministic the provider affects recall, not soundness. Note on data: whichever provider you pick, the planners send authenticated page HTML and observed request URLs (with real object ids) to that API, so treat the choice as a privacy decision.
+
+### The identity spec
+
+The IDOR and access-control scanners need to act *as someone*. That comes from a JSON spec (kept in a gitignored `*.local.json`), parsed by `AccessControlCheck.parseSpec`:
+
+```json
+{
+  "identities": {
+    "attacker": {
+      "login": {
+        "loginUrl": "https://target.example/login",
+        "username": "alice@example.com",
+        "password": "..."
+      }
+    },
+    "victim": {
+      "cookie": "session=eyJ...; csrf=..."
+    }
+  },
+  "cases": [
+    {
+      "name": "advertiser reads another advertiser's campaign",
+      "url": "https://target.example/api/campaign?id=VICTIM_ID",
+      "identity": "attacker",
+      "mustContain": "\"ownerId\":\"victim\""
+    }
+  ]
+}
+```
+
+Each **identity** gives a session one of two ways (pick one):
+
+- **`cookie`** - a raw `Cookie` header value copied from your browser's devtools after logging in. Most reliable (no MFA or field-detection issues), and no password in a file. `headers` (e.g. `{"Authorization": "Bearer ..."}`) works the same way for token auth.
+- **`login`** - `loginUrl` + `username` + `password`; the scanner drives that one real login form (the only auto-submit it performs; field detection is deterministic).
+
+How the two consumers use it:
+
+- **`AccessScannerMain`** runs the **`cases`** array. Each case requests `url` as `identity` (or unauthenticated when `identity` is `null`) and is a finding if the response is 2xx and its body contains `mustContain`. `cases` may be empty.
+- **`IdorScannerMain` / `SpaIdorScannerMain`** ignore `cases` and use the **identities** only: one named `attacker` (or the lone identity if there is exactly one) and an optional `victim`. With a `victim` it is a two-identity test: log in as both, harvest the victim's object ids, then try to read them while authenticated as the attacker.
+
+### Choosing the seed URL
+
+For `ScannerMain` / `SiteScannerMain` the URL argument is simply the page (or crawl seed) to scan, including any query string you want probed (`...?id=1&q=x`).
+
+For `SpaIdorScannerMain` / `IdorScannerMain` the URL is the page to **explore after login** - the login itself comes from the spec's `loginUrl`, not this argument. Pick the page where your objects live (the one you land on after logging in; copy it from your address bar). If unsure, pass the app root: a fallback navigates back to wherever login actually landed you if `/` bounces to `/login`.
+
+### Run
+
+All in one sbt session via the launcher:
+
+```bash
+# per-URL battery + in-scope crawl (observe-only unless the host is authorized)
+./scripts/scan.sh https://target.example/path?q=1
+
+# add two-identity access + browser IDOR by passing a spec
+./scripts/scan.sh https://target.example/app spec.json
+```
+
+Or run a single entry point directly:
+
+| Main | Args | Does | Needs |
+|---|---|---|---|
+| `dast.scan.ScannerMain` | `<url>` | Capture + security headers + analyzer-directed active probes. | key for XSS |
+| `dast.scan.SiteScannerMain` | `<seed>` | Crawl in-scope URLs, scan each, aggregate per URL. | key for XSS |
+| `dast.scan.AccessScannerMain` | `<spec.json>` | Run the spec's `cases` (HTTP, two-identity access control). | spec |
+| `dast.scan.IdorScannerMain` | `<url> <spec.json>` | LLM-planned IDOR over an HTTP cookie-jar session. | spec, key |
+| `dast.scan.SpaIdorScannerMain` | `<url> <spec.json>` | Two-identity IDOR driving a real browser (SPA targets). | spec, key |
+
+```bash
+sbt "runMain dast.scan.SpaIdorScannerMain https://target.example/ spec.json"
+```
+
+To see it work with zero external impact, run the bundled deliberately-vulnerable target: `scripts/demo.sh` starts `scripts/vuln-target.py`, runs every scanner against `localhost` (the authorized scope), and stops it.
+
+```bash
+./scripts/demo.sh
+```
+
+### Reading the report
+
+Each main prints a JSON report to stdout:
+
+```json
+{
+  "target": "https://target.example/path",
+  "findingCount": 1,
+  "findings": [
+    {
+      "kind": "MissingSecurityHeader",
+      "severity": "Medium",
+      "evidence": "response is missing the 'content-security-policy' header (no declarative defence-in-depth against script injection)",
+      "reproducible": true,
+      "replay": "header:content-security-policy@https://target.example/path"
+    }
+  ]
+}
+```
+
+`SiteScannerMain` emits a site report instead: `seed`, total `findingCount`, and a `pages` array of `{ url, findings }`. Each finding has a `kind` (`InsecureCookie`, `SecretInStorage`, `MissingSecurityHeader`, `OpenRedirect`, `SqlInjection`, `Ssrf`, `Xss`, `BrokenAccessControl`), a `severity`, one line of `evidence`, a `reproducible` flag (true when confirmed, not merely suspected), and a `replay` handle that reproduces it without the model (e.g. `header:content-security-policy@<url>` or `access case='...' as=attacker url=...`).
+
+A run with `"findingCount": 0` is a real result, not a failure: for the IDOR scanners it means the app enforced ownership and no cross-account record came back.
+
+### Notes
+
+- **No `ANTHROPIC_API_KEY`?** Deterministic checks (headers, cookies, storage, open redirect, SQLi, SSRF, spec-driven access control) still run; only the LLM-directed steps (XSS direction, IDOR planning) are skipped.
+- **SSRF not firing?** Set `DAST_OAST_BASE_URL` to a listener the target can reach; without it, out-of-band confirmation is skipped.
+- **Everything came back observe-only?** The target host is not in `DAST_AUTHORIZED_HOSTS`.
+
+---
+
+## Build and test
+
+```bash
+sbt test        # whole suite is deterministic: no browser, network, or model
+```
+
+`crawler.pool.ResourcePoolSpec` asserts the core invariant (work runs on the resource's construction thread); if you touch the pool, that spec must stay green. scalafmt is configured (`.scalafmt.conf`); run it rather than hand-formatting. A live scan needs an authorized target (and an API key for the LLM-directed paths).
