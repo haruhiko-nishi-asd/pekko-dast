@@ -274,6 +274,51 @@ final class BrowserResource(
     }
   }
 
+  /** Enumerate the clickable controls on the live nav page, stamping each with
+    * `data-dast-id` so a subsequent [[navClick]] can resolve the model's chosen
+    * id on this same page. The id space is fresh per call (the DOM mutates
+    * after every action), so always enumerate immediately before offering a
+    * choice. Run-only (live browser); the parsing it delegates to is unit
+    * tested.
+    */
+  def navEnumerateClickables(): Seq[dast.ClickTarget] =
+    if (navPage != null)
+      try dast.ClickTargetScanOp
+          .parseTargets(navPage.evaluate(dast.ClickTargetScanOp.EnumerateJs))
+      catch { case _: Exception => Seq.empty }
+    else Seq.empty
+
+  // Post-click `networkidle` cap (ms). A click is usually an in-page reveal, not
+  // a navigation; on a chatty SPA the full nav timeout would stall every click.
+  private val ClickSettleMs = 2500
+
+  /** Click the control stamped `data-dast-id == elementId` on the live nav page
+    * — the id must come from a [[navEnumerateClickables]] on this same page —
+    * triggering its real JS handler, then settle. Returns whether the element
+    * was found (a stale or unknown id is a no-op `false`, never an exception).
+    *
+    * Most clicks are in-page reveals, not navigations, so the post-click settle
+    * caps `networkidle` at a short window: a chatty SPA (websockets / polling)
+    * would otherwise stall the full nav timeout after every click.
+    */
+  def navClick(elementId: Int, navTimeoutMs: Int): Boolean =
+    if (navPage == null) false
+    else Option(navPage.querySelector(s"[data-dast-id='$elementId']")) match {
+      case None => false
+      case Some(el) =>
+        try el.click()
+        catch { case _: Exception => () }
+        try navPage.waitForLoadState(LoadState.LOAD)
+        catch { case _: Exception => () }
+        try navPage.waitForLoadState(
+            LoadState.NETWORKIDLE,
+            new Page.WaitForLoadStateOptions()
+              .setTimeout(math.min(navTimeoutMs, ClickSettleMs).toDouble),
+          )
+        catch { case _: Exception => () }
+        true
+    }
+
   /** All requests the nav page has made so far (deduped). */
   def navRequests(): Seq[String] = navReqs.asScala.toList.distinct
 

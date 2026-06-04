@@ -33,16 +33,26 @@ object LlmDecision:
   /** Nothing further to do on this page. */
   case object Done extends LlmDecision
 
-/** Navigations the model may request. Restricted to actions that do not change
-  * server or application state: no form submission, no destructive clicks.
-  * `FollowLink` references a link id discovered during capture, not a raw URL
-  * the model invented.
+/** Navigations the model may request. Restricted to actions that reach new
+  * application state without the model authoring how. `FollowLink` references a
+  * link id discovered during capture, not a raw URL the model invented; `Click`
+  * references the `data-dast-id` of an element [[ClickTargetScanOp]]
+  * enumerated, not a selector the model wrote. Whether a given click is
+  * state-changing (and so should be gated or denied) is decided downstream by
+  * the executor's safety floor, not here.
   */
 enum NavIntent:
   case Reload
   case Back
   case Forward
   case FollowLink(linkId: String)
+
+  /** Click the enumerated control whose `data-dast-id == elementId`. The model
+    * supplies only the id (a non-negative integer the parser validated), so the
+    * deterministic side re-resolves it by attribute and never trusts a
+    * model-authored selector.
+    */
+  case Click(elementId: Int)
 
 /** The model's sensitivity verdict for a captured value. */
 enum Sensitivity:

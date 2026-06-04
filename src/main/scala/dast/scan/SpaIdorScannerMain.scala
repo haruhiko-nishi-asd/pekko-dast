@@ -68,6 +68,7 @@ object SpaIdorScannerMain:
   private def navTimeoutMs: Int = DastConfig.getInt("DAST_NAV_TIMEOUT_MS", 30000)
   private def maxHops: Int = DastConfig.getInt("DAST_MAX_HOPS", 6)
   private def postBudget: Int = DastConfig.getInt("DAST_POST_BUDGET", 3)
+  private def maxClicks: Int = DastConfig.getInt("DAST_MAX_CLICKS", 8)
 
   private def authorization: Authorization = DastConfig
     .get("DAST_AUTHORIZED_HOSTS") match
@@ -100,6 +101,7 @@ object SpaIdorScannerMain:
       navTimeoutMs,
       maxHops,
       postBudget,
+      maxClicks,
     )) {
       case scala.util.Success(fs) => fs
       case scala.util.Failure(t) =>

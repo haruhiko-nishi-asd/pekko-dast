@@ -21,7 +21,7 @@ It drives a real Chromium browser where one is needed (capture, XSS execution, a
 | Reflected XSS | `Xss` | active, gated | payload executes in the browser (marker fires) | yes | yes (directs) |
 | DOM XSS (sink reach) | `Xss` | active, gated | injected marker reaches a dangerous DOM sink | yes | no |
 | Access control / IDOR (spec) | `BrokenAccessControl` | active, gated, assisted | request as an identity returns restricted data | no (HTTP) | no |
-| IDOR (LLM-planned) | `BrokenAccessControl` | active, gated | a record that is not the caller's own comes back | login + nav | yes (plans, navigates) |
+| IDOR (LLM-planned) | `BrokenAccessControl` | active, gated | a record that is not the caller's own comes back | login + nav + clicks | yes (plans, navigates, clicks) |
 
 ---
 
@@ -244,7 +244,7 @@ sequenceDiagram
 
 **The attack.** The same broken-access-control class, but in the hard setting where the spec approach cannot reach: object ids are **non-guessable** (random ULIDs / UUIDs, so you cannot enumerate `123` to `124`), and the vulnerable endpoints are **not obvious** (a single-page app's XHR / fetch API that a link crawl never sees). To test it you need *real* ids belonging to a different user, and you need to reach the pages and API calls that carry them.
 
-**How the tool checks it.** This is the one place the model is genuinely load-bearing. From a login (the authenticated-scan carve-out) the scanner reaches object-bearing pages two ways: `AuthCrawl` (a deterministic same-host link crawl) and `NavLoop` (the model picks ONE indexed step per hop, follow a link or submit a form, to reach listings a crawl misses). Every submission passes `ActionGuard`: GET always, POST only when the model flags it safe **and** a destructive-pattern deny-list passes (the model's verdict is necessary but never sufficient). For SPA targets the browser also records the XHR / fetch endpoints the app calls. A planner (`IdorPlanner` / `ContentIdorPlanner`) then proposes, **from ids it actually observed**, a parameter, the caller's own value, candidate ids (from a second account, in the two-identity flow), and the per-user discriminator field. `IdorProbe` / `ContentIdorProbe` confirms deterministically: baseline the caller's own value, then for each candidate check whether the response is 2xx and the discriminator field comes back **present and different** from the caller's own (someone else's record). The model cannot fabricate a finding (a secured endpoint yields no diff) and cannot fire a destructive action (the deny-list floor). Replay is the parameter, value, and field, no model needed.
+**How the tool checks it.** This is the one place the model is genuinely load-bearing. From a login (the authenticated-scan carve-out) the scanner reaches object-bearing pages two ways: `AuthCrawl` (a deterministic same-host link crawl) and `NavLoop` (the model picks ONE indexed step per hop, follow a link or submit a form, to reach listings a crawl misses). Every submission passes `ActionGuard`: GET always, POST only when the model flags it safe **and** a destructive-pattern deny-list passes (the model's verdict is necessary but never sufficient). For SPA targets the browser also **clicks** through button-gated UI a link/form crawl cannot reach: `ClickTargetScanOp` enumerates the visible interactive controls (stamping each with a `data-dast-id`), the model picks one *by id* (never a selector), and `ClickLoop` clicks it to reveal new state. That loop is bounded three ways - a shared click budget across pages, a cycle guard keyed on a control's identity (not its re-stamped id), and a dry counter that treats an in-page DOM reveal as progress - and the model is told which controls it already clicked, so it descends into newly-revealed controls instead of repeating. Each click is screened by `ClickGuard` (the same destructive-pattern deny-list, applied to a control's accessible name/role) and gated by `ConsentGate` (it fires only on an authorized host). Throughout, the browser records the XHR / fetch endpoints the app calls. A planner (`IdorPlanner` / `ContentIdorPlanner`) then proposes, **from ids it actually observed**, a parameter, the caller's own value, candidate ids (from a second account, in the two-identity flow), and the per-user discriminator field. `IdorProbe` / `ContentIdorProbe` confirms deterministically: baseline the caller's own value, then for each candidate check whether the response is 2xx and the discriminator field comes back **present and different** from the caller's own (someone else's record). The model cannot fabricate a finding (a secured endpoint yields no diff) and cannot fire a destructive action (the deny-list floor). Replay is the parameter, value, and field, no model needed.
 
 ```mermaid
 sequenceDiagram
@@ -256,7 +256,7 @@ sequenceDiagram
     S->>B: log in (one configured form, ActionGuard-fenced)
     loop bounded hops to reach object-bearing pages
         B->>M: current page, indexed links + forms
-        M-->>B: follow link N, or submit form N (POST only if safe + deny-list passes)
+        M-->>B: follow link N / submit form N / click control N (POST + clicks deny-list-fenced)
         B->>T: request, recording XHR / fetch endpoints
         T-->>B: page + API responses (real ids observed)
     end
@@ -283,7 +283,7 @@ A finding carries kind, severity, evidence, a `reproducible` flag, and a `replay
 Playwright Java's driver is single-threaded, so the browser is hosted on a **thread-affine resource pool**; the rest of the engine is the deterministic checks and the LLM seam the diagrams above reference.
 
 - **`ResourcePool[R]` / `ResourceSession[R]`** (`src/main/scala/crawler/pool`) - a generic node-local pool. Each session owns one `AutoCloseable` resource on its own `PinnedDispatcher` thread and runs all submitted work there; callers get a typed `Future[T]` via `pool.submit`. Total Chromium processes equal the pool size regardless of scan concurrency, and every Playwright call stays on the thread that created the browser.
-- **`BrowserResource`** (`src/main/scala/crawler/BrowserResource.scala`) - one Playwright + Chromium pinned to one thread. Identifiable launch (a `pekko-dast-scanner` user agent and `X-Scanner` header, not stealth), the `withPage` capture op, and a persistent `nav*` session for cookie/login-driven multi-hop SPA navigation.
+- **`BrowserResource`** (`src/main/scala/crawler/BrowserResource.scala`) - one Playwright + Chromium pinned to one thread. Identifiable launch (a `pekko-dast-scanner` user agent and `X-Scanner` header, not stealth), the `withPage` capture op, and a persistent `nav*` session for cookie/login-driven multi-hop SPA navigation (link-follow, form-submit, and `ClickGuard`-fenced clicking of enumerated controls).
 - **`dast.analyzer.LlmClient`** - the single boundary to any model: `callTool(system, user, ToolSpec, maxTokens) -> Option[tool-input]`, fail-closed to `None`. Implementations for Anthropic (default), OpenAI, and Gemini, chosen by `DAST_LLM_PROVIDER`. Because it returns only tool arguments and confirmation is deterministic, provider choice affects recall, not soundness.
 - **`dast.scan.*`** - orchestration: per-URL scan, site crawl, and the IDOR flows, with `Authorization`/`ConsentGate` enforcing scope.
 
@@ -294,8 +294,8 @@ A note on weight: Pekko is heavier than scanning a handful of URLs strictly need
 ## What is validated, and what is not
 
 - **Validated live (against a consenting or local target):** insecure cookies, reflected XSS, open redirect, error-based SQLi, out-of-band SSRF, and access control / IDOR, confirmed end to end against `scripts/vuln-target.py` (which exposes `/?q=` XSS, `/redirect?next=` open redirect, `/item?id=` SQLi, `/fetch?url=` SSRF, `/account?id=` IDOR, and `/admin` missing auth).
-- **Unit tested (pure logic):** every check's decision logic, the decision parser, scope/frontier, the orchestration loop with stubbed effects, and each LLM provider's request builder and response parser.
-- **Live-only (stated, not unit tested):** the browser-driving ops, the HTTP probers, the OAST listener, and the live model calls. Only the Anthropic client has run against a real endpoint; the OpenAI and Gemini clients are wired and parse-tested but not yet exercised live.
+- **Unit tested (pure logic):** every check's decision logic, the decision parser, scope/frontier, the orchestration loop with stubbed effects, each LLM provider's request builder and response parser, and the click loop (its budget / cycle / dry guards with injected effects, the `ClickStep` parse/render boundary, and the `ClickGuard` destructive floor and `ClickOp` gate).
+- **Live-only (stated, not unit tested):** the browser-driving ops, the HTTP probers, the OAST listener, and the live model calls. Only the Anthropic client has run against a real endpoint; the OpenAI and Gemini clients are wired and parse-tested but not yet exercised live. The click ops on a live page (`navEnumerateClickables` / `navClick`) are run-only; clicking has been exercised live against a real authenticated SPA (it fired and revealed button-gated state), but **not** against the bundled `scripts/vuln-target.py`, which is server-rendered and has no JS-gated controls.
 - **Implemented and unit tested, not observed firing live:** time-based SQLi and the DOM sink-scan.
 
 ---
@@ -335,6 +335,7 @@ DAST_AUTHORIZED_HOSTS=target.example
 | `DAST_MAX_DEPTH` | `2` | Site, Idor | Crawl depth. |
 | `DAST_MAX_HOPS` | `4` (Idor) / `6` (SpaIdor) | Idor, SpaIdor | LLM navigation hops. |
 | `DAST_POST_BUDGET` | `3` | Idor, SpaIdor | Max POST navigation actions per run. |
+| `DAST_MAX_CLICKS` | `8` | SpaIdor | Click budget shared across pages for button-gated exploration (`0` disables clicking). |
 | `DAST_MAX_CONCURRENCY` | `4` | global HTTP throttle | In-flight request cap against the target (backpressure). |
 
 Switching provider is a config change, not code (all three go through the one `LlmClient` seam), and because confirmation is deterministic the provider affects recall, not soundness. Note on data: whichever provider you pick, the planners send authenticated page HTML and observed request URLs (with real object ids) to that API, so treat the choice as a privacy decision.

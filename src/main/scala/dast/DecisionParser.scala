@@ -56,6 +56,7 @@ object DecisionParser:
         case "forward" => Right(NavIntent.Forward)
         case "followLink" => strField(actionObj, "linkId")
             .map(NavIntent.FollowLink(_))
+        case "click" => intField(actionObj, "elementId").map(NavIntent.Click(_))
         case other => Left(s"unknown navigate action type '$other'")
     yield Navigate(intent)
 
@@ -71,6 +72,24 @@ object DecisionParser:
         case "unknown" => Right(Sensitivity.Unknown)
         case other => Left(s"unknown verdict '$other'")
     yield Classify(storageKey, verdict)
+
+  /** Require a present field that denotes a whole, non-negative integer — a
+    * JSON number or a numeric string. Used for ids that index an enumerated set
+    * (a `data-dast-id`), so a fractional, negative, or non-numeric value is
+    * off-menu and rejected.
+    */
+  private def intField(
+      obj: ScalaMap[String, ujson.Value],
+      key: String,
+  ): Either[String, Int] = obj.get(key).toRight(s"missing field '$key'")
+    .flatMap { v =>
+      val n = v.numOpt
+        .collect { case d if d == Math.floor(d) && !d.isInfinite => d.toInt }
+        .orElse(v.strOpt.flatMap(s => Try(s.trim.toInt).toOption))
+      n.toRight(s"field '$key' must be an integer").flatMap { i =>
+        if i >= 0 then Right(i) else Left(s"field '$key' must not be negative")
+      }
+    }
 
   /** Require a present, string-typed, non-blank field. */
   private def strField(
