@@ -40,23 +40,47 @@ class IdorPlanSpec extends AnyWordSpec with Matchers {
   }
 
   "IdorPlan.confirms" should {
-    "confirm a 2xx whose field differs from the caller's own value" in {
-      IdorPlan
-        .confirms("alice@x", 200, """{"email":"bob@x"}""", "email") shouldBe
-        true
+    "confirm a 2xx whose field differs from the caller's own and the injected id" in {
+      IdorPlan.confirms(
+        ownFieldValue = "alice@x",
+        injectedValue = "1002",
+        status = 200,
+        candidateBody = """{"email":"bob@x"}""",
+        field = "email",
+      ) shouldBe true
     }
     "not confirm when the field matches the caller's own value" in {
-      IdorPlan
-        .confirms("alice@x", 200, """{"email":"alice@x"}""", "email") shouldBe
-        false
+      IdorPlan.confirms(
+        "alice@x",
+        "1002",
+        200,
+        """{"email":"alice@x"}""",
+        "email",
+      ) shouldBe false
+    }
+    "not confirm when the field merely echoes the injected id (a reflection, not a leak)" in {
+      IdorPlan.confirms(
+        "alice@x",
+        "1002",
+        200,
+        """{"ownerId":"1002"}""",
+        "ownerId",
+      ) shouldBe false
     }
     "not confirm on 403 even if the field differs" in {
       IdorPlan
-        .confirms("alice@x", 403, """{"email":"bob@x"}""", "email") shouldBe
-        false
+        .confirms(
+          "alice@x",
+          "1002",
+          403,
+          """{"email":"bob@x"}""",
+          "email",
+        ) shouldBe false
     }
     "not confirm when the field is absent" in {
-      IdorPlan.confirms("alice@x", 200, """{"id":2}""", "email") shouldBe false
+      IdorPlan
+        .confirms("alice@x", "1002", 200, """{"id":2}""", "email") shouldBe
+        false
     }
   }
 

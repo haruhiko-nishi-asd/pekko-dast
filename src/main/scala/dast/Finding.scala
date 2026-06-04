@@ -7,7 +7,8 @@ enum Severity:
 /** The category of a finding. Extended as checks are added. */
 enum FindingKind:
   case InsecureCookie, SecretInStorage, Xss, MissingSecurityHeader, OpenRedirect,
-    SqlInjection, Ssrf, BrokenAccessControl
+    SqlInjection, Ssrf, BrokenAccessControl, Ssti, PathTraversal, Cors,
+    JwtWeakness
 
 /** A reported issue.
   *

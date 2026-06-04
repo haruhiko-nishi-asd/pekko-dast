@@ -53,3 +53,7 @@ build/
 
 # scan output logs (may contain real target hosts / findings)
 scripts/*.txt
+
+# python bytecode cache (from running the demo target)
+__pycache__/
+*.pyc

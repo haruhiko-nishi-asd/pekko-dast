@@ -1,14 +1,13 @@
 package dast.scan
 
 import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 import scala.util.Failure
 import scala.util.Success
 
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.scaladsl.ActorContext
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
-
-import scala.concurrent.Future
 
 /** Hosts a one-shot scan in a throwaway typed `ActorSystem`, prints the report
   * it renders, and terminates the system.

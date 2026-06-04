@@ -21,6 +21,14 @@ from urllib.parse import urlparse, parse_qs
 
 PORT = 8123
 
+# The canonical jwt.io example token (HS256), signed with the weak, well-known
+# secret "your-256-bit-secret" -- the passive JWT check cracks it offline.
+WEAK_JWT = (
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+    "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ."
+    "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+)
+
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -199,6 +207,59 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
+        # SSTI, on purpose: `name` is rendered through a (toy) template engine
+        # that EVALUATES arithmetic, so `{{N*M}}` / `${N*M}` come back as the
+        # product, not the literal -- exactly what the probe confirms.
+        if parsed.path == "/greet":
+            name = params.get("name", [""])[0]
+            rendered = re.sub(
+                r"(\d+)\*(\d+)",
+                lambda m: str(int(m.group(1)) * int(m.group(2))),
+                name,
+            )
+            body = f"<html><body>Hello, {rendered}</body></html>".encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        # Path traversal / LFI, on purpose: `file` is used as a path with no
+        # sanitisation, so a traversal value reads a system file's contents.
+        if parsed.path == "/download":
+            fname = params.get("file", [""])[0].lower()
+            if "passwd" in fname:
+                body = (
+                    b"root:x:0:0:root:/root:/bin/bash\n"
+                    b"daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin\n"
+                )
+            elif "win.ini" in fname:
+                body = b"; for 16-bit app support\n[fonts]\n[extensions]\n"
+            else:
+                body = b"file not found"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        # CORS misconfiguration, on purpose: reflects ANY Origin and allows
+        # credentials, so any site can make authenticated cross-origin reads.
+        if parsed.path == "/api/data":
+            origin = self.headers.get("Origin", "")
+            body = b'{"data":"ok"}'
+            self.send_response(200)
+            if origin:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         q = params.get("q", [""])[0]
         # Vulnerable on purpose: `q` is interpolated into HTML with no escaping.
         html = (
@@ -209,6 +270,10 @@ class Handler(BaseHTTPRequestHandler):
         )
         body = html.encode("utf-8")
         self.send_response(200)
+        # JWT weakness, on purpose: hands out a token signed with a weak,
+        # guessable HMAC secret ("your-256-bit-secret"), so the passive JWT
+        # check cracks it offline from the captured cookie.
+        self.send_header("Set-Cookie", f"jwt={WEAK_JWT}; Path=/")
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()

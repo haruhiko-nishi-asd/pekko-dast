@@ -29,6 +29,7 @@ import dast.ClickTarget
 import dast.ConsentGate
 import dast.ContentIdorProbe
 import dast.CookieJar
+import dast.CorsProbe
 import dast.DastConfig
 import dast.Finding
 import dast.FormParse
@@ -41,10 +42,12 @@ import dast.NavStep
 import dast.Oast
 import dast.OastListener
 import dast.OpenRedirectProbe
+import dast.PathTraversalProbe
 import dast.ProbeOp
 import dast.SinkScanOp
 import dast.SqlInjectionProbe
 import dast.SsrfProbe
+import dast.SstiProbe
 import dast.analyzer.ClaudeAnalyzer
 import dast.analyzer.ClickPlanner
 import dast.analyzer.ContentIdorPlanner
@@ -646,6 +649,9 @@ object Scanner:
       // only for execution-confirmed XSS; redirects/SQLi are HTTP concerns).
       redirectScan = baseUrl => OpenRedirectProbe.scan(baseUrl),
       sqlScan = baseUrl => SqlInjectionProbe.scan(baseUrl),
+      sstiScan = baseUrl => SstiProbe.scan(baseUrl),
+      pathScan = baseUrl => PathTraversalProbe.scan(baseUrl),
+      corsScan = baseUrl => CorsProbe.scan(baseUrl),
       // SSRF needs an out-of-band listener; skipped (and so never guessed) when
       // DAST_OAST_BASE_URL is unset.
       ssrfScan = oast match

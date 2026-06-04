@@ -57,6 +57,12 @@ object ScanOrchestrator:
         _ => Future.successful(Vector.empty),
       ssrfScan: String => Future[Vector[Finding]] =
         _ => Future.successful(Vector.empty),
+      sstiScan: String => Future[Vector[Finding]] =
+        _ => Future.successful(Vector.empty),
+      pathScan: String => Future[Vector[Finding]] =
+        _ => Future.successful(Vector.empty),
+      corsScan: String => Future[Vector[Finding]] =
+        _ => Future.successful(Vector.empty),
   )
 
   /** Injection-point candidates derived from a URL's query-param names. Pure.
@@ -174,6 +180,9 @@ object ScanOrchestrator:
                 effects.redirectScan(target),
                 effects.sqlScan(target),
                 effects.ssrfScan(target),
+                effects.sstiScan(target),
+                effects.pathScan(target),
+                effects.corsScan(target),
               )).map(_.flatten.toVector).recover { case _ => Vector.empty }
               httpF.flatMap { http =>
                 val all = tier1 ++ dom ++ http
