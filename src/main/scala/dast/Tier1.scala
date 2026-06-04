@@ -10,4 +10,4 @@ object Tier1:
 
   def run(snapshot: ClientStateSnapshot): Seq[Finding] = CookieFlagCheck
     .check(snapshot) ++ SecretInStorageCheck.check(snapshot) ++
-    SecurityHeaderCheck.check(snapshot)
+    SecurityHeaderCheck.check(snapshot) ++ JwtCheck.check(snapshot)

@@ -17,6 +17,10 @@ It drives a real Chromium browser where one is needed (capture, XSS execution, a
 | Missing security headers | `MissingSecurityHeader` | deterministic | response headers read | yes (capture) | no |
 | Open redirect | `OpenRedirect` | active, gated | no-follow request, `Location` targets a sentinel | no (HTTP) | no |
 | SQL injection | `SqlInjection` | active, gated | error signature vs baseline, or re-tested time delay | no (HTTP) | no |
+| SSTI | `Ssti` | active, gated | distinctive arithmetic evaluates server-side (not reflected) | no (HTTP) | no |
+| Path traversal / LFI | `PathTraversal` | active, gated | a known OS-file signature comes back (absent from baseline) | no (HTTP) | no |
+| CORS misconfig | `Cors` | active, gated | a forged `Origin` is reflected (worst with credentials) | no (HTTP) | no |
+| JWT weakness | `JwtWeakness` | deterministic | `alg:none`, or a weak HMAC secret cracked offline | yes (capture) | no |
 | SSRF | `Ssrf` | active, gated | out-of-band callback to a listener we control | no (HTTP) | no |
 | Reflected XSS | `Xss` | active, gated | payload executes in the browser (marker fires) | yes | yes (directs) |
 | DOM XSS (sink reach) | `Xss` | active, gated | injected marker reaches a dangerous DOM sink | yes | no |
@@ -294,7 +298,7 @@ A note on weight: Pekko is heavier than scanning a handful of URLs strictly need
 ## What is validated, and what is not
 
 - **Validated live (against a consenting or local target):** insecure cookies, reflected XSS, open redirect, error-based SQLi, out-of-band SSRF, and access control / IDOR, confirmed end to end against `scripts/vuln-target.py` (which exposes `/?q=` XSS, `/redirect?next=` open redirect, `/item?id=` SQLi, `/fetch?url=` SSRF, `/account?id=` IDOR, and `/admin` missing auth).
-- **Unit tested (pure logic):** every check's decision logic, the decision parser, scope/frontier, the orchestration loop with stubbed effects, each LLM provider's request builder and response parser, and the click loop (its budget / cycle / dry guards with injected effects, the `ClickStep` parse/render boundary, and the `ClickGuard` destructive floor and `ClickOp` gate).
+- **Unit tested (pure logic):** every check's decision logic — including SSTI (evaluation vs reflection), path traversal (OS-file signatures), CORS (origin/credentials verdict), and JWT (`alg:none` + offline HMAC weak-secret cracking) — the decision parser, scope/frontier, the orchestration loop with stubbed effects, each LLM provider's request builder and response parser, and the click loop (its budget / cycle / dry guards with injected effects, the `ClickStep` parse/render boundary, and the `ClickGuard` destructive floor and `ClickOp` gate).
 - **Live-only (stated, not unit tested):** the browser-driving ops, the HTTP probers, the OAST listener, and the live model calls. Only the Anthropic client has run against a real endpoint; the OpenAI and Gemini clients are wired and parse-tested but not yet exercised live. The click ops on a live page (`navEnumerateClickables` / `navClick`) are run-only; clicking has been exercised live against a real authenticated SPA (it fired and revealed button-gated state), but **not** against the bundled `scripts/vuln-target.py`, which is server-rendered and has no JS-gated controls.
 - **Implemented and unit tested, not observed firing live:** time-based SQLi and the DOM sink-scan.
 
@@ -437,7 +441,7 @@ Each main prints a JSON report to stdout:
 }
 ```
 
-`SiteScannerMain` emits a site report instead: `seed`, total `findingCount`, and a `pages` array of `{ url, findings }`. Each finding has a `kind` (`InsecureCookie`, `SecretInStorage`, `MissingSecurityHeader`, `OpenRedirect`, `SqlInjection`, `Ssrf`, `Xss`, `BrokenAccessControl`), a `severity`, one line of `evidence`, a `reproducible` flag (true when confirmed, not merely suspected), and a `replay` handle that reproduces it without the model (e.g. `header:content-security-policy@<url>` or `access case='...' as=attacker url=...`).
+`SiteScannerMain` emits a site report instead: `seed`, total `findingCount`, and a `pages` array of `{ url, findings }`. Each finding has a `kind` (`InsecureCookie`, `SecretInStorage`, `MissingSecurityHeader`, `OpenRedirect`, `SqlInjection`, `Ssti`, `PathTraversal`, `Cors`, `JwtWeakness`, `Ssrf`, `Xss`, `BrokenAccessControl`), a `severity`, one line of `evidence`, a `reproducible` flag (true when confirmed, not merely suspected), and a `replay` handle that reproduces it without the model (e.g. `header:content-security-policy@<url>` or `access case='...' as=attacker url=...`).
 
 A run with `"findingCount": 0` is a real result, not a failure: for the IDOR scanners it means the app enforced ownership and no cross-account record came back.
 
