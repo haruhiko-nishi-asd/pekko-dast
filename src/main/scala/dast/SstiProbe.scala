@@ -25,10 +25,9 @@ object SstiProbe:
   private val UserAgent =
     "pekko-dast-scanner/0.1 (+authorized security testing)"
 
-  def scan(target: String)(using
-      ActorSystem[?],
-      ExecutionContext,
-  ): Future[Vector[Finding]] = Future
+  def scan(
+      target: String,
+  )(using ActorSystem[?], ExecutionContext): Future[Vector[Finding]] = Future
     .sequence(SstiCheck.paramNames(target).map(p => probeParam(target, p)))
     .map(_.flatten.toVector)
 
@@ -38,8 +37,8 @@ object SstiProbe:
   ): Future[Option[Finding]] =
     val point = InjectionPoint.QueryParam(name)
     bodyOf(target).flatMap { baseline =>
-      SstiCheck.payloads.foldLeft(Future.successful(Option.empty[Finding])) {
-        (acc, payload) =>
+      SstiCheck.payloads
+        .foldLeft(Future.successful(Option.empty[Finding])) { (acc, payload) =>
           acc.flatMap {
             case some @ Some(_) => Future.successful(some)
             case None => bodyOf(point.placeInto(target, payload)).map { body =>
@@ -48,7 +47,7 @@ object SstiProbe:
                 else None
               }
           }
-      }
+        }
     }
 
   private def bodyOf(url: String)(using

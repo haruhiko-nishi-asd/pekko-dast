@@ -8,13 +8,14 @@ import scala.util.matching.Regex
   * When a parameter is used to build a filesystem path without sanitisation, a
   * `../`-laden value escapes the intended directory and reads arbitrary files.
   * The deterministic tell, no body guessing: inject traversal sequences toward
-  * well-known OS files and confirm only when a **signature unique to that file**
-  * appears in the response and was **absent from the baseline** (so a page that
-  * always contains the text is not a false positive).
+  * well-known OS files and confirm only when a **signature unique to that
+  * file** appears in the response and was **absent from the baseline** (so a
+  * page that always contains the text is not a false positive).
   *
   * Sound but recall-limited by design: it confirms only files it has a
   * signature for (`/etc/passwd`, `win.ini`). The HTTP requests live in
-  * [[PathTraversalProbe]]; the payloads and confirm decision are pure and tested.
+  * [[PathTraversalProbe]]; the payloads and confirm decision are pure and
+  * tested.
   */
 object PathTraversalCheck:
 
@@ -56,7 +57,8 @@ object PathTraversalCheck:
       kind = FindingKind.PathTraversal,
       severity = Severity.High,
       evidence =
-        s"${point.describe} reads arbitrary files: payload '$payload' returned " +
+        s"${point
+            .describe} reads arbitrary files: payload '$payload' returned " +
           s"the contents of '$file' (path traversal / LFI)",
       reproducible = true,
       replay = s"path-traversal ${point.describe} file=$file payload=$payload",

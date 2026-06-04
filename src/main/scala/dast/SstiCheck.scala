@@ -8,11 +8,11 @@ import scala.util.Try
   * attacker-supplied expression is *evaluated* (often a path to RCE). The
   * deterministic tell, with no body guessing: inject a distinctive arithmetic
   * expression in each common engine's syntax and confirm only when the
-  * **product appears in the response while the raw expression does not** — proof
-  * the server evaluated it, not merely reflected it (the reflection trap that
-  * makes naive checks false-positive, as with XSS). The product is also required
-  * to be absent from the baseline, so a page that happens to contain the number
-  * is not a false positive.
+  * **product appears in the response while the raw expression does not** —
+  * proof the server evaluated it, not merely reflected it (the reflection trap
+  * that makes naive checks false-positive, as with XSS). The product is also
+  * required to be absent from the baseline, so a page that happens to contain
+  * the number is not a false positive.
   *
   * The browser-free HTTP requests live in [[SstiProbe]]; the payloads and the
   * confirm decision here are pure and unit tested.
@@ -59,9 +59,8 @@ object SstiCheck:
   def toFinding(point: InjectionPoint, payload: String): Finding = Finding(
     kind = FindingKind.Ssti,
     severity = Severity.High,
-    evidence =
-      s"${point.describe} evaluates a template expression server-side " +
-        s"(payload '$payload' returned $product) — server-side template injection",
+    evidence = s"${point.describe} evaluates a template expression server-side " +
+      s"(payload '$payload' returned $product) — server-side template injection",
     reproducible = true,
     replay = s"ssti ${point.describe} payload=$payload",
   )

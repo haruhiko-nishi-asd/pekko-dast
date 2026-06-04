@@ -26,24 +26,28 @@ object CorsCheck:
   ): Option[Finding] =
     val allowsCreds = acac.exists(_.trim.equalsIgnoreCase("true"))
     acao.map(_.trim) match
-      case Some(o) if o == requestOrigin && allowsCreds => Some(finding(
+      case Some(o) if o == requestOrigin && allowsCreds =>
+        Some(finding(
           Severity.High,
           s"reflects an arbitrary Origin ($o) AND allows credentials — any " +
             "site can make authenticated cross-origin reads",
           s"reflected-origin+creds origin=$requestOrigin",
         ))
-      case Some(o) if o.equalsIgnoreCase("null") && allowsCreds => Some(finding(
+      case Some(o) if o.equalsIgnoreCase("null") && allowsCreds =>
+        Some(finding(
           Severity.High,
           "trusts the 'null' Origin AND allows credentials — a sandboxed " +
             "document can make authenticated cross-origin reads",
           "null-origin+creds",
         ))
-      case Some(o) if o == requestOrigin => Some(finding(
+      case Some(o) if o == requestOrigin =>
+        Some(finding(
           Severity.Medium,
           s"reflects an arbitrary Origin ($o) — any site can read non-credentialed responses",
           s"reflected-origin origin=$requestOrigin",
         ))
-      case Some("*") if allowsCreds => Some(finding(
+      case Some("*") if allowsCreds =>
+        Some(finding(
           Severity.Medium,
           "returns '*' with credentials allowed — a non-compliant, risky CORS policy",
           "wildcard+creds",

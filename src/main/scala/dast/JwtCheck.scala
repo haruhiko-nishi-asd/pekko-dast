@@ -10,7 +10,8 @@ import scala.util.Try
   * JWTs stashed in cookies or web storage are inspected without touching the
   * network. Two deterministic, high-signal weaknesses are reported:
   *
-  *   - **alg: none** — the token declares no signature, so anyone can forge one.
+  *   - **alg: none** — the token declares no signature, so anyone can forge
+  *     one.
   *   - **weak HMAC secret** — an `HS256/384/512` token whose signature verifies
   *     against a small wordlist of common secrets. A match is proof the secret
   *     is guessable, so any token (incl. an admin one) can be forged. The
@@ -21,7 +22,8 @@ import scala.util.Try
   */
 object JwtCheck:
 
-  /** A small wordlist of secrets seen in tutorials / defaults / weak configs. */
+  /** A small wordlist of secrets seen in tutorials / defaults / weak configs.
+    */
   private val weakSecrets: Seq[String] = Seq(
     "secret",
     "password",
@@ -46,28 +48,28 @@ object JwtCheck:
 
   // Every JWT starts `eyJ` (base64url of `{"`); pull candidates out of a value
   // so a wrapper like `Bearer <jwt>` or a JSON blob still yields the token.
-  private val jwtRe =
-    """eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*""".r
+  private val jwtRe = """eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*""".r
 
   /** All JWT-weakness findings from a snapshot's cookies and web storage. */
-  def check(snapshot: ClientStateSnapshot): Seq[Finding] =
-    sources(snapshot).flatMap { (source, value) =>
+  def check(snapshot: ClientStateSnapshot): Seq[Finding] = sources(snapshot)
+    .flatMap { (source, value) =>
       jwtRe.findAllIn(value).toSeq.flatMap(token => analyze(source, token))
     }.distinctBy(_.replay)
 
-  private def sources(s: ClientStateSnapshot): Seq[(String, String)] =
-    s.cookies.map(c => (s"cookie '${c.name}'", c.value)) ++
-      s.localStorage.toSeq.map((k, v) => (s"localStorage '$k'", v)) ++
-      s.sessionStorage.toSeq.map((k, v) => (s"sessionStorage '$k'", v))
+  private def sources(s: ClientStateSnapshot): Seq[(String, String)] = s.cookies
+    .map(c => (s"cookie '${c.name}'", c.value)) ++
+    s.localStorage.toSeq.map((k, v) => (s"localStorage '$k'", v)) ++
+    s.sessionStorage.toSeq.map((k, v) => (s"sessionStorage '$k'", v))
 
   /** Findings for one candidate token (empty if not a JWT / no weakness). */
   def analyze(source: String, token: String): Seq[Finding] = algOf(token) match
     case None => Seq.empty
     case Some(alg) =>
       val none =
-        if alg.equalsIgnoreCase("none") then Seq(noneFinding(source)) else Seq.empty
-      val weak = weakSecretOf(token, alg)
-        .map(_ => weakSecretFinding(source, alg)).toSeq
+        if alg.equalsIgnoreCase("none") then Seq(noneFinding(source))
+        else Seq.empty
+      val weak = weakSecretOf(token, alg).map(_ => weakSecretFinding(source, alg))
+        .toSeq
       none ++ weak
 
   /** The `alg` from a token's header, if it decodes to a JSON object with one
@@ -85,9 +87,8 @@ object JwtCheck:
       token.split("\\.", -1) match
         case Array(h, p, sig, _*) =>
           val signingInput = s"$h.$p"
-          weakSecrets.find(secret =>
-            sign(signingInput, secret, javaAlg).contains(sig),
-          )
+          weakSecrets
+            .find(secret => sign(signingInput, secret, javaAlg).contains(sig))
         case _ => None
     }
 

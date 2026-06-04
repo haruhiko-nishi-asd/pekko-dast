@@ -35,6 +35,9 @@ sbt -batch \
   "runMain dast.scan.ScannerMain http://localhost:$PORT/item?id=1" \
   "runMain dast.scan.ScannerMain http://localhost:$PORT/fetch?url=seed" \
   "runMain dast.scan.ScannerMain http://localhost:$PORT/redirect?next=home" \
+  "runMain dast.scan.ScannerMain http://localhost:$PORT/greet?name=seed" \
+  "runMain dast.scan.ScannerMain http://localhost:$PORT/download?file=seed" \
+  "runMain dast.scan.ScannerMain http://localhost:$PORT/api/data" \
   "runMain dast.scan.SiteScannerMain http://localhost:$PORT/" \
   "runMain dast.scan.AccessScannerMain scripts/access-spec.example.json"
 

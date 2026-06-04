@@ -17,8 +17,8 @@ class CorsCheckSpec extends AnyWordSpec with Matchers {
     }
 
     "flag the 'null' origin WITH credentials as High" in {
-      CorsCheck.analyze(origin, Some("null"), Some("TRUE")).map(_.severity) shouldBe
-        Some(Severity.High)
+      CorsCheck.analyze(origin, Some("null"), Some("TRUE"))
+        .map(_.severity) shouldBe Some(Severity.High)
     }
 
     "flag a reflected origin WITHOUT credentials as Medium" in {
@@ -27,13 +27,14 @@ class CorsCheckSpec extends AnyWordSpec with Matchers {
     }
 
     "flag wildcard WITH credentials as Medium" in {
-      CorsCheck.analyze(origin, Some("*"), Some("true")).map(_.severity) shouldBe
-        Some(Severity.Medium)
+      CorsCheck.analyze(origin, Some("*"), Some("true"))
+        .map(_.severity) shouldBe Some(Severity.Medium)
     }
 
     "not flag wildcard without credentials, or an unrelated/absent ACAO" in {
       CorsCheck.analyze(origin, Some("*"), None) shouldBe None
-      CorsCheck.analyze(origin, Some("https://app.example"), Some("true")) shouldBe
+      CorsCheck
+        .analyze(origin, Some("https://app.example"), Some("true")) shouldBe
         None
       CorsCheck.analyze(origin, None, None) shouldBe None
     }

@@ -41,8 +41,11 @@ class PathTraversalCheckSpec extends AnyWordSpec with Matchers {
 
   "PathTraversalCheck.toFinding" should {
     "be a High, reproducible path-traversal finding" in {
-      val f = PathTraversalCheck
-        .toFinding(InjectionPoint.QueryParam("file"), "/etc/passwd", "../etc/passwd")
+      val f = PathTraversalCheck.toFinding(
+        InjectionPoint.QueryParam("file"),
+        "/etc/passwd",
+        "../etc/passwd",
+      )
       f.kind shouldBe FindingKind.PathTraversal
       f.severity shouldBe Severity.High
       f.reproducible shouldBe true

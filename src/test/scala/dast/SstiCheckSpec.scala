@@ -15,12 +15,14 @@ class SstiCheckSpec extends AnyWordSpec with Matchers {
     }
 
     "reject reflection: the raw expression echoed back is not evaluation" in {
-      SstiCheck.confirms("<p>hi</p>", s"<p>${SstiCheck.expr}</p>") shouldBe false
+      SstiCheck.confirms("<p>hi</p>", s"<p>${SstiCheck.expr}</p>") shouldBe
+        false
     }
 
     "reject when the product was already present in the baseline" in {
       val body = s"order total ${SstiCheck.product}"
-      SstiCheck.confirms(baselineBody = body, injectedBody = body) shouldBe false
+      SstiCheck.confirms(baselineBody = body, injectedBody = body) shouldBe
+        false
     }
   }
 

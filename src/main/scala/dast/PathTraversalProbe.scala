@@ -25,12 +25,12 @@ object PathTraversalProbe:
   private val UserAgent =
     "pekko-dast-scanner/0.1 (+authorized security testing)"
 
-  def scan(target: String)(using
-      ActorSystem[?],
-      ExecutionContext,
-  ): Future[Vector[Finding]] = Future
-    .sequence(PathTraversalCheck.paramNames(target).map(p => probeParam(target, p)))
-    .map(_.flatten.toVector)
+  def scan(
+      target: String,
+  )(using ActorSystem[?], ExecutionContext): Future[Vector[Finding]] = Future
+    .sequence(
+      PathTraversalCheck.paramNames(target).map(p => probeParam(target, p)),
+    ).map(_.flatten.toVector)
 
   private def probeParam(target: String, name: String)(using
       ActorSystem[?],
