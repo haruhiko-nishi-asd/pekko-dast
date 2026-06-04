@@ -12,7 +12,8 @@ class ClickLoopSpec extends AnyWordSpec with Matchers {
 
   private val seed = "https://app.example/seed"
   private val authed = Authorization.active("app.example")
-  private def benign(id: Int) = ClickTarget(id, "button", "Open menu", disabled = false)
+  private def benign(id: Int) =
+    ClickTarget(id, "button", "Open menu", disabled = false)
 
   /** A fake live page: fixed enumerated controls; `onClick` decides the reached
     * state. Counts how many times the browser was actually clicked.
@@ -87,7 +88,8 @@ class ClickLoopSpec extends AnyWordSpec with Matchers {
     }
 
     "never click a destructive control even when authorized" in {
-      val destructive = ClickTarget(0, "button", "Delete account", disabled = false)
+      val destructive =
+        ClickTarget(0, "button", "Delete account", disabled = false)
       val eff = new FakeEffects(Seq(destructive), _ => Some((seed, "h")))
       val out = run(alwaysClick0, eff)
       eff.clicks shouldBe 0
@@ -107,8 +109,10 @@ class ClickLoopSpec extends AnyWordSpec with Matchers {
       // Two controls; clicking changes the DOM but not the url (an in-page
       // reveal). The planner picks the first control it has NOT been told it
       // clicked, so it should click A then B then finish — not loop on A.
-      val targets =
-        Seq(ClickTarget(0, "button", "A", false), ClickTarget(1, "button", "B", false))
+      val targets = Seq(
+        ClickTarget(0, "button", "A", false),
+        ClickTarget(1, "button", "B", false),
+      )
       var clickedArgs = List.empty[Seq[String]]
       var n = 0
       val eff = new FakeEffects(targets, _ => { n += 1; Some((seed, s"h$n")) })
@@ -122,6 +126,32 @@ class ClickLoopSpec extends AnyWordSpec with Matchers {
       out.clicksPerformed shouldBe 2
       clickedArgs.head shouldBe Seq.empty
       clickedArgs.exists(_.contains("button/A")) shouldBe true
+    }
+
+    "scroll to load more rows, surfacing new controls, then stop when exhausted" in {
+      // Each scroll loads one more row (a new control), until three rows exist;
+      // then scroll returns None and the dry counter stops the loop.
+      var rows = 1
+      var scrolls = 0
+      val effects = new ClickLoop.Effects {
+        def enumerate(): Future[Seq[ClickTarget]] = Future
+          .successful((0 until rows).map(i =>
+            ClickTarget(i, "button", "View", disabled = false, hint = s"row-$i"),
+          ))
+        def click(elementId: Int): Future[Option[(String, String)]] = Future
+          .successful(None)
+        override def scroll(): Future[Option[(String, String)]] =
+          scrolls += 1
+          if rows < 3 then
+            rows += 1
+            Future.successful(Some((seed, s"rows-$rows")))
+          else Future.successful(None)
+      }
+      val out = run((_, _, _, _) => Future.successful(ClickStep.Scroll), effects)
+      out.clicksPerformed shouldBe 0 // scrolling is not a click
+      scrolls should be >= 3
+      // the seed plus the two loaded states were captured for the planner
+      out.pages.map(_._2).distinct.size shouldBe 3
     }
   }
 }

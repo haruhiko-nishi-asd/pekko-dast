@@ -10,7 +10,9 @@ class ClickTargetScanOpSpec extends AnyWordSpec with Matchers {
     pairs.foreach((k, v) => m.put(k, v))
     m
 
-  private def list(rows: java.util.Map[String, Object]*): java.util.List[Object] =
+  private def list(
+      rows: java.util.Map[String, Object]*,
+  ): java.util.List[Object] =
     val l = new java.util.ArrayList[Object]()
     rows.foreach(l.add)
     l
@@ -40,8 +42,16 @@ class ClickTargetScanOpSpec extends AnyWordSpec with Matchers {
 
     "accept whole-number ids that arrive as Double or Long from the JS bridge" in {
       val raw = list(
-        row("id" -> java.lang.Double.valueOf(2.0), "role" -> "tab", "name" -> "X"),
-        row("id" -> java.lang.Long.valueOf(3L), "role" -> "button", "name" -> "Y"),
+        row(
+          "id" -> java.lang.Double.valueOf(2.0),
+          "role" -> "tab",
+          "name" -> "X",
+        ),
+        row(
+          "id" -> java.lang.Long.valueOf(3L),
+          "role" -> "button",
+          "name" -> "Y",
+        ),
       )
       ClickTargetScanOp.parseTargets(raw).map(_.id) shouldBe Seq(2, 3)
     }
@@ -50,7 +60,11 @@ class ClickTargetScanOpSpec extends AnyWordSpec with Matchers {
       val raw = list(
         row("role" -> "button", "name" -> "no id"),
         row("id" -> "nope", "role" -> "button", "name" -> "bad id"),
-        row("id" -> java.lang.Double.valueOf(1.5), "role" -> "button", "name" -> "fractional"),
+        row(
+          "id" -> java.lang.Double.valueOf(1.5),
+          "role" -> "button",
+          "name" -> "fractional",
+        ),
         row("id" -> Integer.valueOf(7), "role" -> "button", "name" -> "good"),
       )
       ClickTargetScanOp.parseTargets(raw) shouldBe
@@ -69,20 +83,33 @@ class ClickTargetScanOpSpec extends AnyWordSpec with Matchers {
 
       val mixed = new java.util.ArrayList[Object]()
       mixed.add("not a row")
-      mixed.add(row("id" -> Integer.valueOf(0), "role" -> "button", "name" -> "ok"))
+      mixed
+        .add(row("id" -> Integer.valueOf(0), "role" -> "button", "name" -> "ok"))
       ClickTargetScanOp.parseTargets(mixed) shouldBe
         Seq(ClickTarget(0, "button", "ok", disabled = false))
     }
 
     "treat aria-disabled string 'true' as disabled" in {
-      val raw = list(row("id" -> Integer.valueOf(0), "role" -> "button", "disabled" -> "true"))
+      val raw = list(
+        row("id" -> Integer.valueOf(0), "role" -> "button", "disabled" -> "true"),
+      )
       ClickTargetScanOp.parseTargets(raw).head.disabled shouldBe true
     }
 
     "carry the hint so same-named controls stay distinct" in {
       val raw = list(
-        row("id" -> Integer.valueOf(0), "role" -> "button", "name" -> "View", "hint" -> "row-1"),
-        row("id" -> Integer.valueOf(1), "role" -> "button", "name" -> "View", "hint" -> "row-2"),
+        row(
+          "id" -> Integer.valueOf(0),
+          "role" -> "button",
+          "name" -> "View",
+          "hint" -> "row-1",
+        ),
+        row(
+          "id" -> Integer.valueOf(1),
+          "role" -> "button",
+          "name" -> "View",
+          "hint" -> "row-2",
+        ),
       )
       val ts = ClickTargetScanOp.parseTargets(raw)
       ts.map(_.hint) shouldBe Seq("row-1", "row-2")
@@ -92,9 +119,10 @@ class ClickTargetScanOpSpec extends AnyWordSpec with Matchers {
 
   "ClickTarget.key" should {
     "omit the hint when empty and include it otherwise" in {
-      ClickTarget(0, "button", "Save", disabled = false).key shouldBe "button/Save"
-      ClickTarget(0, "button", "Save", disabled = false, hint = "x").key shouldBe
-        "button/Save/x"
+      ClickTarget(0, "button", "Save", disabled = false).key shouldBe
+        "button/Save"
+      ClickTarget(0, "button", "Save", disabled = false, hint = "x")
+        .key shouldBe "button/Save/x"
     }
   }
 
@@ -110,22 +138,22 @@ class ClickTargetScanOpSpec extends AnyWordSpec with Matchers {
       js should include("shadowRoot") // descends into open shadow roots
       js should include("hint")
       // offsetParent is the buggy test we deliberately avoid.
-      js should not include "offsetParent"
+      (js should not).include("offsetParent")
     }
   }
 
   "ClickTarget.describe" should {
 
     "render a compact, model-facing line" in {
-      ClickTarget(3, "button", "Add to cart", disabled = false).describe shouldBe
-        "#3 button \"Add to cart\""
+      ClickTarget(3, "button", "Add to cart", disabled = false)
+        .describe shouldBe "#3 button \"Add to cart\""
       ClickTarget(4, "button", "", disabled = true).describe shouldBe
         "#4 button (no name) [disabled]"
     }
 
     "include the hint when present" in {
-      ClickTarget(5, "button", "View", disabled = false, hint = "row-2").describe shouldBe
-        "#5 button \"View\" (row-2)"
+      ClickTarget(5, "button", "View", disabled = false, hint = "row-2")
+        .describe shouldBe "#5 button \"View\" (row-2)"
     }
   }
 }

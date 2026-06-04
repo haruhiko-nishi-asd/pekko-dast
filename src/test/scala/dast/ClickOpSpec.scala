@@ -7,13 +7,18 @@ class ClickOpSpec extends AnyWordSpec with Matchers {
 
   private val authed = Authorization.active("example.com")
   private val benign = ClickTarget(3, "button", "Open menu", disabled = false)
-  private val destructive = ClickTarget(4, "button", "Delete account", disabled = false)
+  private val destructive =
+    ClickTarget(4, "button", "Delete account", disabled = false)
 
   "ClickOp.precheck" should {
 
     "deny under the observe-only default (no browser touched)" in {
-      ClickOp.precheck(Authorization.ObserveOnly, "https://example.com", benign) shouldBe
-        Left("active testing is disabled (observe-only)")
+      ClickOp
+        .precheck(
+          Authorization.ObserveOnly,
+          "https://example.com",
+          benign,
+        ) shouldBe Left("active testing is disabled (observe-only)")
     }
 
     "deny an off-scope host even for a benign control" in {

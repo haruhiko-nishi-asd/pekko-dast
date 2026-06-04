@@ -363,6 +363,11 @@ object Scanner:
               Some((r.navUrl(), r.navHtml()))
             else None
           }
+        override def scroll(): Future[Option[(String, String)]] =
+          sessionSubmit(session) { r =>
+            if r.navScroll(navTimeoutMs) then Some((r.navUrl(), r.navHtml()))
+            else None
+          }
 
       // Cap each page's share so the first page cannot spend the whole budget
       // and starve later ones; the shared budget is still the hard ceiling.

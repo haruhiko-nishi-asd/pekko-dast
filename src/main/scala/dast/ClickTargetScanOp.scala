@@ -9,11 +9,11 @@ import crawler.BrowserResource
   * Plain data (README): produced by enumerating the live DOM, consumed by an
   * LLM planner that returns only an `id` from this audited menu. `id` is the
   * `data-dast-id` attribute the enumeration stamped onto the element, so the
-  * deterministic click side can re-resolve it with `[data-dast-id="id"]` without
-  * trusting any selector the model authored. `hint` is a stable contextual tag
-  * (the control's own id / href, else the nearest ancestor id / `data-id`) that
-  * distinguishes otherwise-identically-named controls — e.g. one "View" button
-  * per row, each carrying a different object id.
+  * deterministic click side can re-resolve it with `[data-dast-id="id"]`
+  * without trusting any selector the model authored. `hint` is a stable
+  * contextual tag (the control's own id / href, else the nearest ancestor id /
+  * `data-id`) that distinguishes otherwise-identically-named controls — e.g.
+  * one "View" button per row, each carrying a different object id.
   */
 final case class ClickTarget(
     id: Int,
@@ -26,7 +26,8 @@ final case class ClickTarget(
     * to dedup and cycle-guard a control. Two same-named controls with different
     * `hint`s are distinct, so each gets explored.
     */
-  def key: String = if hint.isEmpty then s"$role/$name" else s"$role/$name/$hint"
+  def key: String =
+    if hint.isEmpty then s"$role/$name" else s"$role/$name/$hint"
 
   /** A compact, model-facing description: `#3 button "Add to cart"`. */
   def describe: String =
@@ -44,9 +45,10 @@ final case class ClickTarget(
   * query or a selector; it selects an `id` the parser validated, and the click
   * op resolves that id by the `data-dast-id` attribute this op stamped on.
   *
-  * Unlike [[CaptureOp]], enumeration writes a benign `data-dast-id` attribute to
-  * each candidate, so it is a (read-mostly) mutation, not strictly observe-only;
-  * the orchestrator should gate it like the other active browser ops.
+  * Unlike [[CaptureOp]], enumeration writes a benign `data-dast-id` attribute
+  * to each candidate, so it is a (read-mostly) mutation, not strictly
+  * observe-only; the orchestrator should gate it like the other active browser
+  * ops.
   *
   * It descends into open shadow roots (web components), and the matching
   * `navClick` resolves the stamped id through Playwright's shadow-piercing
@@ -59,9 +61,9 @@ object ClickTargetScanOp:
 
   /** Installed by evaluating after load: collect visible, interactable controls
     * (piercing open shadow roots), stamp each with a stable `data-dast-id`, and
-    * return a compact descriptor list. `checkVisibility` is `position:fixed`-safe
-    * (unlike `offsetParent`) and honours display / visibility / opacity /
-    * content-visibility.
+    * return a compact descriptor list. `checkVisibility` is
+    * `position:fixed`-safe (unlike `offsetParent`) and honours display /
+    * visibility / opacity / content-visibility.
     */
   val EnumerateJs: String =
     """() => {
@@ -103,21 +105,19 @@ object ClickTargetScanOp:
       |}""".stripMargin
 
   /** Pure: turn the `EnumerateJs` readback (a JS array of objects, surfaced by
-    * Playwright as a `java.util.List` of `java.util.Map`) into [[ClickTarget]]s.
-    * Tolerant by construction — a non-list, a non-map row, or a row missing a
-    * usable integer `id` is skipped rather than throwing, so a hostile or
-    * unusual page cannot break enumeration.
+    * Playwright as a `java.util.List` of `java.util.Map`) into
+    * [[ClickTarget]]s. Tolerant by construction — a non-list, a non-map row, or
+    * a row missing a usable integer `id` is skipped rather than throwing, so a
+    * hostile or unusual page cannot break enumeration.
     */
   def parseTargets(raw: Any): Seq[ClickTarget] = raw match
-    case l: java.util.List[?] =>
-      l.asScala.iterator.collect { case m: java.util.Map[?, ?] => m }
-        .flatMap(rowToTarget).toSeq
+    case l: java.util.List[?] => l.asScala.iterator
+        .collect { case m: java.util.Map[?, ?] => m }.flatMap(rowToTarget).toSeq
     case _ => Seq.empty
 
   private def rowToTarget(row: java.util.Map[?, ?]): Option[ClickTarget] =
-    val m = row.asScala.iterator.collect { case (k, v) if k != null =>
-      k.toString -> (v: Any)
-    }.toMap
+    val m = row.asScala.iterator
+      .collect { case (k, v) if k != null => k.toString -> (v: Any) }.toMap
     asInt(m.get("id")).map { id =>
       ClickTarget(
         id = id,
@@ -137,9 +137,8 @@ object ClickTargetScanOp:
       n.intValue()
   }
 
-  private def asString(v: Option[Any]): Option[String] = v.collect {
-    case s if s != null => s.toString
-  }
+  private def asString(v: Option[Any]): Option[String] = v
+    .collect { case s if s != null => s.toString }
 
   private def asBool(v: Option[Any]): Boolean = v.exists {
     case b: java.lang.Boolean => b.booleanValue()
@@ -150,5 +149,5 @@ object ClickTargetScanOp:
   /** Run on the pinned thread: load `url`, enumerate the clickable controls.
     * Not unit tested (needs a live page); the parsing it delegates to is.
     */
-  def scan(resource: BrowserResource, url: String): Seq[ClickTarget] =
-    resource.withPage(url)((page, _) => parseTargets(page.evaluate(EnumerateJs)))
+  def scan(resource: BrowserResource, url: String): Seq[ClickTarget] = resource
+    .withPage(url)((page, _) => parseTargets(page.evaluate(EnumerateJs)))

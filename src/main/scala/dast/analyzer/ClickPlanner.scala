@@ -27,25 +27,27 @@ object ClickPlanner:
   val ToolName = "choose_click"
   val MaxTokens = 512
 
-  private val SystemPrompt =
-    "You are the click-exploration step of a consented scan. From the current " +
-      "authenticated page, choose ONE control to click to reveal new state " +
-      "(open a menu, tab, accordion, or detail view), or finish. Pick only the " +
-      "indexed controls shown, by id. Never choose a control that creates, " +
-      "updates, deletes, pays, or logs out. Choose done when nothing new " +
-      "remains. You never write code."
+  private val SystemPrompt = "You are the click-exploration step of a consented scan. From the current " +
+    "authenticated page, choose ONE control to click to reveal new state " +
+    "(open a menu, tab, accordion, or detail view), or scroll to load more " +
+    "rows of a long/paginated list, or finish. Pick only the indexed controls " +
+    "shown, by id. Never choose a control that creates, updates, deletes, " +
+    "pays, or logs out. Choose done when nothing new remains. You never write " +
+    "code."
 
   private val schema: ujson.Value = ujson.Obj(
     "type" -> "object",
     "properties" -> ujson.Obj(
-      "action" -> ujson
-        .Obj("type" -> "string", "enum" -> ujson.Arr("click", "done")),
+      "action" ->
+        ujson
+          .Obj("type" -> "string", "enum" -> ujson.Arr("click", "scroll", "done")),
       "elementId" -> ujson.Obj("type" -> "integer"),
     ),
     "required" -> ujson.Arr("action"),
   )
 
-  val Tool: ToolSpec = ToolSpec(ToolName, "Choose the next control to click.", schema)
+  val Tool: ToolSpec =
+    ToolSpec(ToolName, "Choose the next control to click.", schema)
 
   /** Map the tool input to a step, failing closed to `Done`. */
   def inputToStep(input: ujson.Value): ClickStep = ClickStep.parse(input)

@@ -5,8 +5,11 @@ import org.scalatest.wordspec.AnyWordSpec
 
 class ClickGuardSpec extends AnyWordSpec with Matchers {
 
-  private def target(name: String, role: String = "button", disabled: Boolean = false) =
-    ClickTarget(0, role, name, disabled)
+  private def target(
+      name: String,
+      role: String = "button",
+      disabled: Boolean = false,
+  ) = ClickTarget(0, role, name, disabled)
 
   "ClickGuard.allow" should {
 

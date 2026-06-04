@@ -32,8 +32,8 @@ object ClickOp:
   /** Browser-side click on the pinned thread. Composes [[precheck]] (fail
     * closed) with the click on the live nav page; the loop reads `navUrl` /
     * `navHtml` afterwards to observe the reached state. `Left` is a refusal
-    * reason or a missing element; `Right(())` means the control was clicked. Not
-    * unit tested (needs a live page); precheck is.
+    * reason or a missing element; `Right(())` means the control was clicked.
+    * Not unit tested (needs a live page); precheck is.
     */
   def click(
       resource: BrowserResource,

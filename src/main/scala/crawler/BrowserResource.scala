@@ -319,6 +319,34 @@ final class BrowserResource(
         true
     }
 
+  /** Scroll the live nav page to the bottom to load lazily-rendered content
+    * (infinite / paginated lists), then settle. Returns whether new content
+    * loaded (the document grew taller) — so an exhausted list reads as `false`.
+    * Never throws; a failure is a no-op `false`.
+    */
+  def navScroll(navTimeoutMs: Int): Boolean =
+    if (navPage == null) false
+    else
+      try {
+        val before = scrollHeight()
+        navPage.evaluate(
+          "() => window.scrollTo(0, document.documentElement.scrollHeight)",
+        )
+        try navPage.waitForLoadState(
+            LoadState.NETWORKIDLE,
+            new Page.WaitForLoadStateOptions()
+              .setTimeout(math.min(navTimeoutMs, ClickSettleMs).toDouble),
+          )
+        catch { case _: Exception => () }
+        scrollHeight() > before
+      } catch { case _: Exception => false }
+
+  private def scrollHeight(): Double = navPage
+    .evaluate("() => document.documentElement.scrollHeight") match {
+    case n: java.lang.Number => n.doubleValue()
+    case _ => 0.0
+  }
+
   /** All requests the nav page has made so far (deduped). */
   def navRequests(): Seq[String] = navReqs.asScala.toList.distinct
 
