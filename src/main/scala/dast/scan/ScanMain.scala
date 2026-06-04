@@ -28,13 +28,13 @@ object ScanMain:
   ): Unit =
     val guardian = Behaviors.setup[Nothing] { ctx =>
       given ExecutionContext = ctx.executionContext
-      scan(ctx).onComplete {
-        case Success(report) =>
-          println(report)
-          ctx.system.terminate()
-        case Failure(e) =>
-          ctx.log.error("Scan failed: {}", e.toString)
-          ctx.system.terminate()
+      scan(ctx).onComplete { result =>
+        // Persist the evidence transcript (no-op unless DAST_EVIDENCE_FILE set).
+        dast.EvidenceLog.flush()
+        result match
+          case Success(report) => println(report)
+          case Failure(e) => ctx.log.error("Scan failed: {}", e.toString)
+        ctx.system.terminate()
       }
       Behaviors.empty
     }

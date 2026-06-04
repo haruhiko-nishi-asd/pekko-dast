@@ -122,6 +122,12 @@ object ScanOrchestrator:
                     val point = InjectionPoint.QueryParam(injectionPointId)
                     effects.probe(target, point, payloadId, freshMarker())
                       .recover { case _ => None }.flatMap { found =>
+                        dast.EvidenceLog.decision(
+                          "xss",
+                          point.describe,
+                          payloadId,
+                          found.isDefined,
+                        )
                         found match
                           case Some(f) => log
                               .info(s"Probe CONFIRMED on $target: ${f.evidence}")

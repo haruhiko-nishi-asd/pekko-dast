@@ -71,7 +71,7 @@ object OpenRedirectProbe:
       uri = url,
       headers = List(headers.RawHeader("User-Agent", UserAgent)),
     )
-    HttpThrottle(Http()(system).singleRequest(request)).map { response =>
+    ProbeHttp.send("open-redirect", request).map { response =>
       response.entity.discardBytes()
       val loc =
         if response.status.isRedirection() then

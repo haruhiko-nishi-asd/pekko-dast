@@ -34,7 +34,7 @@ object CorsProbe:
         headers.RawHeader("Origin", CorsCheck.probeOrigin),
       ),
     )
-    HttpThrottle(Http()(system).singleRequest(request)).map { response =>
+    ProbeHttp.send("cors", request).map { response =>
       response.entity.discardBytes()
       def header(name: String): Option[String] = response.headers
         .find(_.lowercaseName() == name.toLowerCase).map(_.value())

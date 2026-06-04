@@ -53,10 +53,13 @@ object SstiProbe:
   private def bodyOf(url: String)(using
       system: ActorSystem[?],
       ec: ExecutionContext,
-  ): Future[String] = HttpThrottle(Http()(system).singleRequest(HttpRequest(
-    uri = url,
-    headers = List(headers.RawHeader("User-Agent", UserAgent)),
-  ))).flatMap(r => Unmarshal(r.entity).to[String]).recover { case t =>
+  ): Future[String] = ProbeHttp.send(
+    "ssti",
+    HttpRequest(
+      uri = url,
+      headers = List(headers.RawHeader("User-Agent", UserAgent)),
+    ),
+  ).flatMap(r => Unmarshal(r.entity).to[String]).recover { case t =>
     log.warn("SSTI probe error for {}: {}", url, t.getMessage)
     ""
   }

@@ -114,7 +114,7 @@ object SqlInjectionProbe:
       headers = List(headers.RawHeader("User-Agent", UserAgent)),
     )
     val start = System.nanoTime()
-    HttpThrottle(Http()(system).singleRequest(request)).flatMap { response =>
+    ProbeHttp.send("sqli", request).flatMap { response =>
       Unmarshal(response.entity).to[String]
         .map(body => Some(((System.nanoTime() - start) / 1000000L, body)))
     }.recover { case t =>

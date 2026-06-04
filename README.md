@@ -340,6 +340,7 @@ DAST_AUTHORIZED_HOSTS=target.example
 | `DAST_MAX_HOPS` | `4` (Idor) / `6` (SpaIdor) | Idor, SpaIdor | LLM navigation hops. |
 | `DAST_POST_BUDGET` | `3` | Idor, SpaIdor | Max POST navigation actions per run. |
 | `DAST_MAX_CLICKS` | `8` | SpaIdor | Click budget shared across pages for button-gated exploration (`0` disables clicking). |
+| `DAST_EVIDENCE_FILE` | (none -> off) | all scanner mains | Path to write a JSON-Lines evidence transcript: every target HTTP request (with its injected payload, response status/headers/timing) and each XSS verdict, so a scan's work is provable and replayable. Off when unset. |
 | `DAST_MAX_CONCURRENCY` | `4` | global HTTP throttle | In-flight request cap against the target (backpressure). |
 
 Switching provider is a config change, not code (all three go through the one `LlmClient` seam), and because confirmation is deterministic the provider affects recall, not soundness. Note on data: whichever provider you pick, the planners send authenticated page HTML and observed request URLs (with real object ids) to that API, so treat the choice as a privacy decision.

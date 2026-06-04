@@ -94,7 +94,7 @@ object ContentIdorProbe:
           ),
         )
       else HttpRequest(HttpMethods.GET, ContentIdor.fill(p.urlTemplate, id), hs)
-    HttpThrottle(Http()(system).singleRequest(request)).flatMap { response =>
+    ProbeHttp.send("content-idor", request).flatMap { response =>
       Unmarshal(response.entity).to[String]
         .map(body => Some((response.status.intValue(), body)))
     }.recover { case t =>
