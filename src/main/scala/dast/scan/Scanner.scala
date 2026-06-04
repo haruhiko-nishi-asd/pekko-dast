@@ -4,14 +4,11 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
-import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.scaladsl.ActorContext
-import org.apache.pekko.actor.typed.scaladsl.AskPattern.*
-import org.apache.pekko.util.Timeout
 
 import crawler.BrowserResource
 import crawler.UrlNormalizer
@@ -66,54 +63,46 @@ import dast.analyzer.NavStepPlanner
   */
 object Scanner:
 
-  /** Spawn a browser pool and a single-URL scan orchestrator wired to it. */
-  def spawn(
+  /** Build a browser pool + OAST and run a single-URL scan, completing with all
+    * findings. Observe-only unless `auth` authorizes the target host.
+    */
+  def scanOne(
       ctx: ActorContext[?],
+      target: String,
       auth: Authorization = Authorization.ObserveOnly,
       poolSize: Int = 2,
       navTimeoutMs: Int = 30000,
-  )(using
-      ActorSystem[?],
-      ExecutionContext,
-  ): ActorRef[ScanOrchestrator.Command] =
+  )(using ActorSystem[?], ExecutionContext): Future[Vector[Finding]] =
     val pool = buildPool(ctx, poolSize, navTimeoutMs)
     val oast = buildOast()
-    ctx.spawn(
-      ScanOrchestrator(auth, scanEffects(pool, auth, navTimeoutMs, oast)),
-      "dast-scan-orchestrator",
-    )
+    ScanOrchestrator
+      .run(auth, scanEffects(pool, auth, navTimeoutMs, oast), target)
 
-  /** Spawn a site-scan orchestrator: discover in-scope URLs from the seed
-    * (read-only crawl) and run a full scan on each.
+  /** Discover in-scope URLs from `seed` (read-only crawl) and scan each,
+    * completing with per-URL results. Per-URL active probing stays gated by
+    * `ConsentGate` inside each scan.
     */
-  def spawnSite(
+  def scanSite(
       ctx: ActorContext[?],
+      seed: String,
       auth: Authorization = Authorization.ObserveOnly,
       poolSize: Int = 2,
       navTimeoutMs: Int = 30000,
       maxDepth: Int = 2,
       maxPages: Int = 20,
-      perScanTimeout: FiniteDuration = 5.minutes,
   )(using
-      system: ActorSystem[?],
-      ec: ExecutionContext,
-  ): ActorRef[SiteScanOrchestrator.Command] =
+      ActorSystem[?],
+      ExecutionContext,
+  ): Future[Vector[(String, Vector[Finding])]] =
     val pool = buildPool(ctx, poolSize, navTimeoutMs)
     val oast = buildOast()
-    val counter = new AtomicInteger(0)
-    given Timeout = Timeout(perScanTimeout)
-
     val effects = SiteScanOrchestrator.Effects(
-      discover = seed => discover(pool, seed, maxDepth, maxPages),
+      discover = s => discover(pool, s, maxDepth, maxPages),
       scanOne = url =>
-        val ref = system.systemActorOf(
-          ScanOrchestrator(auth, scanEffects(pool, auth, navTimeoutMs, oast)),
-          s"dast-scan-${counter.incrementAndGet()}",
-        )
-        ref.ask[ScanOrchestrator.ScanComplete](ScanOrchestrator.Start(url, _))
-          .map(_.findings),
+        ScanOrchestrator
+          .run(auth, scanEffects(pool, auth, navTimeoutMs, oast), url),
     )
-    ctx.spawn(SiteScanOrchestrator(effects, maxPages), "dast-site-orchestrator")
+    SiteScanOrchestrator.run(effects, seed, maxPages)
 
   /** Run a spec-driven access-control / IDOR scan. Identities configured with a
     * `login` get a browser-minted session first (gated, §5 carve-out); the

@@ -4,14 +4,11 @@ import scala.concurrent.ExecutionContext
 import scala.util.Try
 
 import org.apache.pekko.actor.typed.ActorSystem
-import org.apache.pekko.actor.typed.Behavior
-import org.apache.pekko.actor.typed.scaladsl.Behaviors
 
 import dast.AccessControlCheck
 import dast.AccessControlCheck.Identity
 import dast.Authorization
 import dast.DastConfig
-import dast.Finding
 
 /** Runnable LLM-planned IDOR scanner.
   *
@@ -31,20 +28,40 @@ object IdorScannerMain:
     val specPath = args.drop(1).headOption.filter(_.nonEmpty)
       .orElse(DastConfig.get("DAST_ACCESS_SPEC"))
     (url, specPath) match
-      case (None, _) =>
-        Console.err.println("usage: IdorScannerMain <url> <identity-spec.json>")
-        sys.exit(2)
-      case (Some(_), None) =>
-        Console.err.println("usage: IdorScannerMain <url> <identity-spec.json>")
-        sys.exit(2)
       case (Some(target), Some(path)) => loadIdentity(path) match
           case Left(err) =>
             Console.err.println(err)
             sys.exit(2)
-          case Right(identity) => ActorSystem(
-              guardian(target, identity, authorization),
-              "dast-idor-scanner",
-            )
+          case Right(identity) => run(target, identity)
+      case _ =>
+        Console.err.println("usage: IdorScannerMain <url> <identity-spec.json>")
+        sys.exit(2)
+
+  private def run(url: String, identity: Identity): Unit = ScanMain
+    .run("dast-idor-scanner") { ctx =>
+      given ActorSystem[?] = ctx.system
+      given ExecutionContext = ctx.executionContext
+      val auth = authorization
+      ctx.log.info(
+        "IDOR scan from {} (active scope: {}, maxPages={}, maxDepth={})",
+        url,
+        if auth.allowActive then auth.authorizedHosts.mkString(",")
+        else "observe-only (skipped)",
+        maxPages,
+        maxDepth,
+      )
+      Scanner.runIdor(
+        ctx,
+        url,
+        identity,
+        auth,
+        navTimeoutMs,
+        maxDepth,
+        maxPages,
+        maxHops,
+        postBudget,
+      ).map(fs => FindingsReport.render(url, fs))
+    }
 
   private def loadIdentity(path: String): Either[String, Identity] = Try {
     val src = scala.io.Source.fromFile(path, "UTF-8")
@@ -65,41 +82,3 @@ object IdorScannerMain:
     case Some(hosts) => Authorization
         .active(hosts.split(",").map(_.trim).toIndexedSeq*)
     case None => Authorization.ObserveOnly
-
-  private def guardian(
-      url: String,
-      identity: Identity,
-      auth: Authorization,
-  ): Behavior[Vector[Finding]] = Behaviors.setup { ctx =>
-    given ExecutionContext = ctx.executionContext
-    given ActorSystem[?] = ctx.system
-
-    ctx.log.info(
-      "IDOR scan from {} (active scope: {}, maxPages={}, maxDepth={})",
-      url,
-      if auth.allowActive then auth.authorizedHosts.mkString(",")
-      else "observe-only (skipped)",
-      maxPages,
-      maxDepth,
-    )
-    ctx.pipeToSelf(Scanner.runIdor(
-      ctx,
-      url,
-      identity,
-      auth,
-      navTimeoutMs,
-      maxDepth,
-      maxPages,
-      maxHops,
-      postBudget,
-    )) {
-      case scala.util.Success(fs) => fs
-      case scala.util.Failure(_) => Vector.empty
-    }
-
-    Behaviors.receiveMessage { findings =>
-      println(FindingsReport.render(url, findings))
-      ctx.log.info("Done; {} finding(s).", findings.size)
-      Behaviors.stopped
-    }
-  }
