@@ -18,8 +18,9 @@ import scala.jdk.CollectionConverters.*
 object EvidenceLog:
 
   private val records = new ConcurrentLinkedQueue[ujson.Obj]()
-  @volatile private var on: Boolean =
-    DastConfig.get("DAST_EVIDENCE_FILE").exists(_.nonEmpty)
+  @volatile
+  private var on: Boolean = DastConfig.get("DAST_EVIDENCE_FILE")
+    .exists(_.nonEmpty)
 
   /** Whether recording is active (the cheap guard probes check first). */
   def enabled: Boolean = on
@@ -79,6 +80,6 @@ object EvidenceLog:
   def flush(): Unit = DastConfig.get("DAST_EVIDENCE_FILE").filter(_.nonEmpty)
     .foreach { path =>
       try java.nio.file.Files
-        .writeString(java.nio.file.Paths.get(path), render() + "\n")
+          .writeString(java.nio.file.Paths.get(path), render() + "\n")
       catch { case _: Exception => () }
     }
