@@ -86,8 +86,13 @@ object IdorProbe:
         case some @ Some(_) => Future.successful(some)
         case None => fetch(point.placeInto(url, candidate), cookie).map {
             case Some((cs, cbody))
-                if IdorPlan
-                  .confirms(ownValue, cs, cbody, p.discriminatorField) =>
+                if IdorPlan.confirms(
+                  ownValue,
+                  candidate,
+                  cs,
+                  cbody,
+                  p.discriminatorField,
+                ) =>
               val leaked = IdorPlan.extractField(cbody, p.discriminatorField)
                 .getOrElse("")
               Some(IdorPlan.toFinding(

@@ -84,16 +84,19 @@ object IdorPlan:
     case _ => None
 
   /** Confirmed IDOR: a 2xx whose discriminator field is present and differs
-    * from the caller's own baseline value (so cross-user data came back).
+    * from BOTH the caller's own baseline value AND the injected candidate id
+    * (so genuine cross-user data came back, not the endpoint merely echoing the
+    * id we requested back into the field — a reflection, not a leak).
     */
   def confirms(
       ownFieldValue: String,
+      injectedValue: String,
       status: Int,
       candidateBody: String,
       field: String,
   ): Boolean = status >= 200 && status <= 299 &&
     extractField(candidateBody, field)
-      .exists(v => v.nonEmpty && v != ownFieldValue)
+      .exists(v => v.nonEmpty && v != ownFieldValue && v != injectedValue)
 
   /** Parse the tool's `proposals` array into validated proposals (drops any
     * missing a required field or with no candidates).
