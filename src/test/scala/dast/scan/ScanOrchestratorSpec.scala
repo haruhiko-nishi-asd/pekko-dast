@@ -2,18 +2,19 @@ package dast.scan
 
 import java.util.concurrent.atomic.AtomicInteger
 
+import scala.concurrent.Await
+import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.Future
+import scala.concurrent.duration.*
 
-import org.apache.pekko.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import org.scalatest.matchers.should.Matchers
-import org.scalatest.wordspec.AnyWordSpecLike
+import org.scalatest.wordspec.AnyWordSpec
 
 import dast.*
 import dast.LlmDecision.*
 import dast.scan.ScanOrchestrator.*
 
-class ScanOrchestratorSpec
-    extends ScalaTestWithActorTestKit with AnyWordSpecLike with Matchers {
+class ScanOrchestratorSpec extends AnyWordSpec with Matchers {
 
   // A snapshot whose insecure session cookie yields deterministic Tier 1 findings.
   private val snapshot = ClientStateSnapshot(
@@ -39,6 +40,9 @@ class ScanOrchestratorSpec
     "probe q",
   )
 
+  private type AnalyzerCtxF =
+    dast.analyzer.AnalyzerContext => Future[LlmDecision]
+
   private def effects(
       analyze: AnalyzerCtxF,
       probe: (String, InjectionPoint, String, String) => Future[Option[Finding]],
@@ -60,34 +64,34 @@ class ScanOrchestratorSpec
     ssrfScan = ssrfScan,
   )
 
-  private type AnalyzerCtxF =
-    dast.analyzer.AnalyzerContext => Future[LlmDecision]
+  private def run(
+      auth: Authorization,
+      eff: Effects,
+      maxSteps: Int = 8,
+  ): Vector[Finding] = Await
+    .result(ScanOrchestrator.run(auth, eff, target, maxSteps), 5.seconds)
 
-  "ScanOrchestrator" should {
+  "ScanOrchestrator.run" should {
 
     "report only Tier 1 findings and never probe under observe-only auth" in {
       val probeCalls = new AtomicInteger(0)
-      val orch = spawn(ScanOrchestrator(
+      val done = run(
         Authorization.ObserveOnly,
         effects(
-          analyze = _ => Future.successful(Probe("q", "img-onerror")), // always wants to probe
+          analyze = _ => Future.successful(Probe("q", "img-onerror")),
           probe = (_, _, _, _) => {
             probeCalls.incrementAndGet(); Future.successful(Some(probeFinding))
           },
         ),
         maxSteps = 3,
-      ))
-      val reply = createTestProbe[ScanComplete]()
-
-      orch ! Start(target, reply.ref)
-      val done = reply.expectMessageType[ScanComplete]
-      done.findings shouldBe tier1
+      )
+      done shouldBe tier1
       probeCalls.get() shouldBe 0
     }
 
     "run a gated probe and collect its finding under active auth" in {
       val analyzeCalls = new AtomicInteger(0)
-      val orch = spawn(ScanOrchestrator(
+      val done = run(
         Authorization.active("example.com"),
         effects(
           analyze = _ =>
@@ -98,17 +102,13 @@ class ScanOrchestratorSpec
             ),
           probe = (_, _, _, _) => Future.successful(Some(probeFinding)),
         ),
-      ))
-      val reply = createTestProbe[ScanComplete]()
-
-      orch ! Start(target, reply.ref)
-      val done = reply.expectMessageType[ScanComplete]
-      done.findings shouldBe (tier1 :+ probeFinding)
+      )
+      done shouldBe (tier1 :+ probeFinding)
     }
 
     "stop at the step budget when the analyzer keeps choosing new probes" in {
       val probeCalls = new AtomicInteger(0)
-      val orch = spawn(ScanOrchestrator(
+      val done = run(
         Authorization.active("example.com"),
         effects(
           // A distinct payload each step so no probe is ever a repeat; the loop
@@ -120,17 +120,14 @@ class ScanOrchestratorSpec
           },
         ),
         maxSteps = 2,
-      ))
-      val reply = createTestProbe[ScanComplete]()
-
-      orch ! Start(target, reply.ref)
-      reply.expectMessageType[ScanComplete].findings shouldBe tier1
+      )
+      done shouldBe tier1
       probeCalls.get() shouldBe 2
     }
 
     "not re-probe a repeated decision: finish early and record it once" in {
       val probeCalls = new AtomicInteger(0)
-      val orch = spawn(ScanOrchestrator(
+      val done = run(
         Authorization.active("example.com"),
         effects(
           // Always the same probe; once attempted, the orchestrator finishes
@@ -141,12 +138,8 @@ class ScanOrchestratorSpec
           },
         ),
         maxSteps = 5,
-      ))
-      val reply = createTestProbe[ScanComplete]()
-
-      orch ! Start(target, reply.ref)
-      reply.expectMessageType[ScanComplete].findings shouldBe
-        (tier1 :+ probeFinding)
+      )
+      done shouldBe (tier1 :+ probeFinding)
       probeCalls.get() shouldBe 1
     }
 
@@ -158,19 +151,14 @@ class ScanOrchestratorSpec
         reproducible = true,
         "redirect query param 'next'",
       )
-      val orch = spawn(ScanOrchestrator(
+      run(
         Authorization.active("example.com"),
         effects(
-          analyze = _ => Future.successful(Done), // no reflected probing
+          analyze = _ => Future.successful(Done),
           probe = (_, _, _, _) => Future.successful(None),
           redirectScan = _ => Future.successful(Vector(redirectFinding)),
         ),
-      ))
-      val reply = createTestProbe[ScanComplete]()
-
-      orch ! Start(target, reply.ref)
-      reply.expectMessageType[ScanComplete].findings shouldBe
-        (tier1 :+ redirectFinding)
+      ) shouldBe (tier1 :+ redirectFinding)
     }
 
     "merge SQL-injection findings under active auth" in {
@@ -181,19 +169,14 @@ class ScanOrchestratorSpec
         reproducible = true,
         "sqli query param 'id' technique=error",
       )
-      val orch = spawn(ScanOrchestrator(
+      run(
         Authorization.active("example.com"),
         effects(
           analyze = _ => Future.successful(Done),
           probe = (_, _, _, _) => Future.successful(None),
           sqlScan = _ => Future.successful(Vector(sqliFinding)),
         ),
-      ))
-      val reply = createTestProbe[ScanComplete]()
-
-      orch ! Start(target, reply.ref)
-      reply.expectMessageType[ScanComplete].findings shouldBe
-        (tier1 :+ sqliFinding)
+      ) shouldBe (tier1 :+ sqliFinding)
     }
 
     "merge SSRF findings under active auth" in {
@@ -204,24 +187,19 @@ class ScanOrchestratorSpec
         reproducible = true,
         "ssrf query param 'url' token=t1",
       )
-      val orch = spawn(ScanOrchestrator(
+      run(
         Authorization.active("example.com"),
         effects(
           analyze = _ => Future.successful(Done),
           probe = (_, _, _, _) => Future.successful(None),
           ssrfScan = _ => Future.successful(Vector(ssrfFinding)),
         ),
-      ))
-      val reply = createTestProbe[ScanComplete]()
-
-      orch ! Start(target, reply.ref)
-      reply.expectMessageType[ScanComplete].findings shouldBe
-        (tier1 :+ ssrfFinding)
+      ) shouldBe (tier1 :+ ssrfFinding)
     }
 
     "not run the open-redirect probe under observe-only auth" in {
       val redirectCalls = new AtomicInteger(0)
-      val orch = spawn(ScanOrchestrator(
+      val done = run(
         Authorization.ObserveOnly,
         effects(
           analyze = _ => Future.successful(Done),
@@ -230,45 +208,39 @@ class ScanOrchestratorSpec
             redirectCalls.incrementAndGet(); Future.successful(Vector.empty)
           },
         ),
-      ))
-      val reply = createTestProbe[ScanComplete]()
-
-      orch ! Start(target, reply.ref)
-      reply.expectMessageType[ScanComplete].findings shouldBe tier1
+      )
+      done shouldBe tier1
       redirectCalls.get() shouldBe 0
     }
 
     "run a DOM sink-scan under active auth and report reached sinks" in {
-      val orch = spawn(ScanOrchestrator(
+      val done = run(
         Authorization.active("example.com"),
         effects(
-          analyze = _ => Future.successful(Done), // no reflected probing this run
+          analyze = _ => Future.successful(Done),
           probe = (_, _, _, _) => Future.successful(None),
           sinkScan = (_, _, _) => Future.successful(Set("innerHTML")),
         ),
-      ))
-      val reply = createTestProbe[ScanComplete]()
-
-      orch ! Start(target, reply.ref)
-      val expected = tier1 ++
-        SinkScanOp.toFindings(InjectionPoint.Fragment, Set("innerHTML"))
-      reply.expectMessageType[ScanComplete].findings shouldBe expected
+      )
+      done shouldBe
+        (tier1 ++ SinkScanOp.toFindings(InjectionPoint.Fragment, Set("innerHTML")))
     }
 
     "finish with no findings when capture fails" in {
-      val orch = spawn(ScanOrchestrator(
-        Authorization.ObserveOnly,
-        Effects(
-          capture = _ => Future.failed(new RuntimeException("boom")),
-          analyze = _ => Future.successful(Done),
-          probe = (_, _, _, _) => Future.successful(None),
-          sinkScan = (_, _, _) => Future.successful(Set.empty),
+      val done = Await.result(
+        ScanOrchestrator.run(
+          Authorization.ObserveOnly,
+          Effects(
+            capture = _ => Future.failed(new RuntimeException("boom")),
+            analyze = _ => Future.successful(Done),
+            probe = (_, _, _, _) => Future.successful(None),
+            sinkScan = (_, _, _) => Future.successful(Set.empty),
+          ),
+          target,
         ),
-      ))
-      val reply = createTestProbe[ScanComplete]()
-
-      orch ! Start(target, reply.ref)
-      reply.expectMessageType[ScanComplete].findings shouldBe empty
+        5.seconds,
+      )
+      done shouldBe empty
     }
   }
 }

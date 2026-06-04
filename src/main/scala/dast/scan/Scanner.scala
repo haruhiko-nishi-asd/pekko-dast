@@ -4,14 +4,11 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
-import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.scaladsl.ActorContext
-import org.apache.pekko.actor.typed.scaladsl.AskPattern.*
-import org.apache.pekko.util.Timeout
 
 import crawler.BrowserResource
 import crawler.UrlNormalizer
@@ -27,6 +24,8 @@ import dast.ActionGuard
 import dast.AuthCrawl
 import dast.Authorization
 import dast.CaptureOp
+import dast.ClickLoop
+import dast.ClickTarget
 import dast.ConsentGate
 import dast.ContentIdorProbe
 import dast.CookieJar
@@ -47,6 +46,7 @@ import dast.SinkScanOp
 import dast.SqlInjectionProbe
 import dast.SsrfProbe
 import dast.analyzer.ClaudeAnalyzer
+import dast.analyzer.ClickPlanner
 import dast.analyzer.ContentIdorPlanner
 import dast.analyzer.IdorPlanner
 import dast.analyzer.NavStepPlanner
@@ -63,54 +63,46 @@ import dast.analyzer.NavStepPlanner
   */
 object Scanner:
 
-  /** Spawn a browser pool and a single-URL scan orchestrator wired to it. */
-  def spawn(
+  /** Build a browser pool + OAST and run a single-URL scan, completing with all
+    * findings. Observe-only unless `auth` authorizes the target host.
+    */
+  def scanOne(
       ctx: ActorContext[?],
+      target: String,
       auth: Authorization = Authorization.ObserveOnly,
       poolSize: Int = 2,
       navTimeoutMs: Int = 30000,
-  )(using
-      ActorSystem[?],
-      ExecutionContext,
-  ): ActorRef[ScanOrchestrator.Command] =
+  )(using ActorSystem[?], ExecutionContext): Future[Vector[Finding]] =
     val pool = buildPool(ctx, poolSize, navTimeoutMs)
     val oast = buildOast()
-    ctx.spawn(
-      ScanOrchestrator(auth, scanEffects(pool, auth, navTimeoutMs, oast)),
-      "dast-scan-orchestrator",
-    )
+    ScanOrchestrator
+      .run(auth, scanEffects(pool, auth, navTimeoutMs, oast), target)
 
-  /** Spawn a site-scan orchestrator: discover in-scope URLs from the seed
-    * (read-only crawl) and run a full scan on each.
+  /** Discover in-scope URLs from `seed` (read-only crawl) and scan each,
+    * completing with per-URL results. Per-URL active probing stays gated by
+    * `ConsentGate` inside each scan.
     */
-  def spawnSite(
+  def scanSite(
       ctx: ActorContext[?],
+      seed: String,
       auth: Authorization = Authorization.ObserveOnly,
       poolSize: Int = 2,
       navTimeoutMs: Int = 30000,
       maxDepth: Int = 2,
       maxPages: Int = 20,
-      perScanTimeout: FiniteDuration = 5.minutes,
   )(using
-      system: ActorSystem[?],
-      ec: ExecutionContext,
-  ): ActorRef[SiteScanOrchestrator.Command] =
+      ActorSystem[?],
+      ExecutionContext,
+  ): Future[Vector[(String, Vector[Finding])]] =
     val pool = buildPool(ctx, poolSize, navTimeoutMs)
     val oast = buildOast()
-    val counter = new AtomicInteger(0)
-    given Timeout = Timeout(perScanTimeout)
-
     val effects = SiteScanOrchestrator.Effects(
-      discover = seed => discover(pool, seed, maxDepth, maxPages),
+      discover = s => discover(pool, s, maxDepth, maxPages),
       scanOne = url =>
-        val ref = system.systemActorOf(
-          ScanOrchestrator(auth, scanEffects(pool, auth, navTimeoutMs, oast)),
-          s"dast-scan-${counter.incrementAndGet()}",
-        )
-        ref.ask[ScanOrchestrator.ScanComplete](ScanOrchestrator.Start(url, _))
-          .map(_.findings),
+        ScanOrchestrator
+          .run(auth, scanEffects(pool, auth, navTimeoutMs, oast), url),
     )
-    ctx.spawn(SiteScanOrchestrator(effects, maxPages), "dast-site-orchestrator")
+    SiteScanOrchestrator.run(effects, seed, maxPages)
 
   /** Run a spec-driven access-control / IDOR scan. Identities configured with a
     * `login` get a browser-minted session first (gated, §5 carve-out); the
@@ -192,6 +184,7 @@ object Scanner:
       navTimeoutMs: Int = 30000,
       maxHops: Int = 6,
       postBudget: Int = 3,
+      maxClicks: Int = 4,
   )(using ActorSystem[?], ExecutionContext): Future[Vector[Finding]] =
     ConsentGate.decide(auth, ActionClass.Active, url) match
       case GateDecision.Deny(_) => Future.successful(Vector.empty)
@@ -214,6 +207,7 @@ object Scanner:
               navTimeoutMs,
               maxHops,
               postBudget,
+              maxClicks,
             ).map((pages, _, rqs) => (pages, sameHost(rqs)))
           case _ => Future
               .successful((Vector.empty[(String, String)], Seq.empty[String]))
@@ -226,6 +220,7 @@ object Scanner:
             navTimeoutMs,
             maxHops,
             postBudget,
+            maxClicks,
           ).flatMap { (pages, cookie, requested) =>
             val reqs = sameHost(requested)
             log.info(
@@ -279,6 +274,7 @@ object Scanner:
       navTimeoutMs: Int,
       maxHops: Int,
       postBudget: Int,
+      maxClicks: Int,
   )(using
       ActorSystem[?],
       ExecutionContext,
@@ -317,13 +313,85 @@ object Scanner:
         navTimeoutMs,
         Vector.empty,
       ).flatMap { pages =>
-        sessionSubmit(session) { r =>
-          val reqs = r.navRequests(); r.navStop(); reqs
-        }.map(reqs => (pages, cookie, reqs))
+        clickExploreAll(session, auth, navTimeoutMs, maxClicks, pages).flatMap {
+          allPages =>
+            sessionSubmit(session) { r =>
+              val reqs = r.navRequests(); r.navStop(); reqs
+            }.map(reqs => (allPages, cookie, reqs))
+        }
       }
     }
     result.onComplete(_ => session ! crawler.pool.ResourceSession.Stop)
     result
+
+  /** After the link/form crawl, explore controls behind JS buttons. Visits each
+    * captured page in turn (re-navigating the live session to it), enumerates
+    * its clickable controls, and lets the model click to reveal new state --
+    * appending the pages reached so the existing collectors see them. One click
+    * budget is shared across all pages (debited by the clicks each page
+    * spends), but capped per page so a single page cannot starve the rest.
+    * Every click is gated and screened by [[ClickOp]] inside [[ClickLoop]].
+    * Fails soft: with no budget, no model, or no clickables it returns `pages`.
+    */
+  private def clickExploreAll(
+      session: ActorRef[crawler.pool.ResourceSession.Command],
+      auth: Authorization,
+      navTimeoutMs: Int,
+      maxClicks: Int,
+      pages: Vector[(String, String)],
+  )(using ActorSystem[?], ExecutionContext): Future[Vector[(String, String)]] =
+    if maxClicks <= 0 || pages.isEmpty then Future.successful(pages)
+    else
+      val log = org.slf4j.LoggerFactory.getLogger("dast.scan.Scanner")
+      val effects = new ClickLoop.Effects:
+        def enumerate(): Future[Seq[ClickTarget]] =
+          sessionSubmit(session)(_.navEnumerateClickables())
+        def click(elementId: Int): Future[Option[(String, String)]] =
+          sessionSubmit(session) { r =>
+            if r.navClick(elementId, navTimeoutMs) then
+              Some((r.navUrl(), r.navHtml()))
+            else None
+          }
+        override def scroll(): Future[Option[(String, String)]] =
+          sessionSubmit(session) { r =>
+            if r.navScroll(navTimeoutMs) then Some((r.navUrl(), r.navHtml()))
+            else None
+          }
+
+      // Cap each page's share so the first page cannot spend the whole budget
+      // and starve later ones; the shared budget is still the hard ceiling.
+      val perPage = math.max(1, math.ceil(maxClicks.toDouble / pages.size).toInt)
+
+      def go(
+          remaining: List[String],
+          budget: Int,
+          acc: Vector[(String, String)],
+      ): Future[Vector[(String, String)]] = remaining match
+        case Nil => Future.successful(acc)
+        case _ if budget <= 0 => Future.successful(acc)
+        case pageUrl :: rest => sessionSubmit(session) { r =>
+            r.navGoto(pageUrl, navTimeoutMs); (r.navUrl(), r.navHtml())
+          }.flatMap { (u, h) =>
+            ClickLoop.explore(
+              u,
+              h,
+              auth,
+              ClickPlanner.plan,
+              effects,
+              math.min(budget, perPage),
+              acc,
+            ).flatMap { outcome =>
+              log.info(
+                "Click exploration from {}: {} click(s) spent, {} page(s) total",
+                pageUrl,
+                outcome.clicksPerformed,
+                outcome.pages.size,
+              )
+              go(rest, budget - outcome.clicksPerformed, outcome.pages)
+            }
+          }
+
+      go(pages.map(_._1).toList, maxClicks, pages)
 
   /** One navigation hop in the browser session: observe the live page, ask the
     * model for a step, gate it, perform it on the persistent page, recurse.

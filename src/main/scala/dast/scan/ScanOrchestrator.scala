@@ -6,10 +6,7 @@ import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
 
-import org.apache.pekko.actor.typed.ActorRef
-import org.apache.pekko.actor.typed.Behavior
-import org.apache.pekko.actor.typed.scaladsl.ActorContext
-import org.apache.pekko.actor.typed.scaladsl.Behaviors
+import org.slf4j.LoggerFactory
 
 import dast.ActionClass
 import dast.Authorization
@@ -35,21 +32,15 @@ import dast.analyzer.AnalyzerContext
   * work) and, when permitted, run [[dast.ProbeOp]]. `Done` or budget exhaustion
   * finishes the scan with all findings.
   *
-  * Effects (capture / analyze / probe) are injected so the loop is testable
-  * with stubs and no browser or model. All futures are delivered via
-  * `ctx.pipeToSelf`, so the actor never blocks and every failure folds to a
-  * safe step (the analyzer already fails closed to `Done`).
+  * This is a sequential async pipeline expressed as a plain `Future`: effects
+  * (capture / analyze / probe) are injected so it is testable with stubs and no
+  * browser or model, and it fails soft throughout — a capture failure yields no
+  * findings, and every effect failure folds to a safe step (the analyzer
+  * already fails closed to `Done`).
   */
 object ScanOrchestrator:
 
-  sealed trait Command
-
-  /** Begin a scan of `target`; the result is sent to `replyTo`. */
-  final case class Start(target: String, replyTo: ActorRef[ScanComplete])
-      extends Command
-
-  /** The scan result: every finding (Tier 1 + confirmed probes). */
-  final case class ScanComplete(target: String, findings: Vector[Finding])
+  private val log = LoggerFactory.getLogger("dast.scan.ScanOrchestrator")
 
   /** The browser/model effects, injected for testability. `sinkScan` delivers a
     * benign marker through a source and returns the DOM sinks it reached.
@@ -68,20 +59,6 @@ object ScanOrchestrator:
         _ => Future.successful(Vector.empty),
   )
 
-  private final case class SnapshotReady(snapshot: ClientStateSnapshot)
-      extends Command
-  private final case class CaptureFailed(reason: String) extends Command
-  private final case class SinkScanReady(
-      snapshot: ClientStateSnapshot,
-      sinks: Set[String],
-  ) extends Command
-  private final case class HttpScanReady(
-      snapshot: ClientStateSnapshot,
-      findings: Vector[Finding],
-  ) extends Command
-  private final case class DecisionReady(decision: LlmDecision) extends Command
-  private final case class ProbeResult(finding: Option[Finding]) extends Command
-
   /** Injection-point candidates derived from a URL's query-param names. Pure.
     */
   def injectionPointsOf(url: String): Seq[String] = Try(
@@ -90,204 +67,125 @@ object ScanOrchestrator:
     .map(_.split("&").toSeq.filter(_.nonEmpty).map(_.split("=", 2)(0)).distinct)
     .getOrElse(Seq.empty)
 
-  def apply(
+  /** Run the scan, completing with all findings (Tier 1 + confirmed probes). */
+  def run(
       auth: Authorization,
       effects: Effects,
+      target: String,
       maxSteps: Int = 8,
       freshMarker: () => String = () => Markers.fresh(),
-  ): Behavior[Command] = Behaviors.setup { ctx =>
-    Behaviors.receiveMessagePartial { case Start(target, replyTo) =>
-      new ScanOrchestrator(
-        ctx,
-        auth,
-        effects,
-        maxSteps,
-        freshMarker,
-        target,
-        replyTo,
-      ).begin()
-    }
-  }
+  )(using ExecutionContext): Future[Vector[Finding]] =
 
-private class ScanOrchestrator(
-    ctx: ActorContext[ScanOrchestrator.Command],
-    auth: Authorization,
-    effects: ScanOrchestrator.Effects,
-    maxSteps: Int,
-    freshMarker: () => String,
-    target: String,
-    replyTo: ActorRef[ScanOrchestrator.ScanComplete],
-):
-  import ScanOrchestrator.*
+    // The analyzer/probe loop: one decision per step, bounded by `budget`.
+    def step(
+        snapshot: ClientStateSnapshot,
+        findings: Vector[Finding],
+        budget: Int,
+        attempted: Set[(String, String)],
+    ): Future[Vector[Finding]] =
+      if budget <= 0 then Future.successful(findings)
+      else
+        val points = injectionPointsOf(target)
+        log.info(s"Asking analyzer (step ${maxSteps - budget +
+            1}/$maxSteps) for " + s"$target: injection points [${points
+            .mkString(", ")}]")
+        val context = AnalyzerContext
+          .fromSnapshot(snapshot, injectionPointIds = points)
+        effects.analyze(context).recover { case _ => LlmDecision.Done }
+          .flatMap {
+            case Done =>
+              log.info(s"Analyzer decided: Done for $target")
+              Future.successful(findings)
+            case Probe(injectionPointId, payloadId) =>
+              log.info(
+                s"Analyzer decided: Probe param '$injectionPointId' with " +
+                  s"payload '$payloadId' on $target",
+              )
+              val key = (injectionPointId, payloadId)
+              if attempted.contains(key) then
+                // Re-selected an attempted probe: converged with nothing new, so
+                // finish rather than burn budget re-confirming the same finding.
+                log.info(
+                  s"Probe '$injectionPointId'/'$payloadId' already attempted " +
+                    s"on $target; finishing",
+                )
+                Future.successful(findings)
+              else
+                ConsentGate.decide(auth, ActionClass.Active, target) match
+                  case GateDecision.Permit =>
+                    val point = InjectionPoint.QueryParam(injectionPointId)
+                    effects.probe(target, point, payloadId, freshMarker())
+                      .recover { case _ => None }.flatMap { found =>
+                        found match
+                          case Some(f) => log
+                              .info(s"Probe CONFIRMED on $target: ${f.evidence}")
+                          case None => log.info(
+                              s"Probe not confirmed on $target (no execution)",
+                            )
+                        // Dedupe by replay handle so a finding is never recorded
+                        // twice.
+                        val merged = found.toVector
+                          .foldLeft(findings)((acc, f) =>
+                            if acc.exists(_.replay == f.replay) then acc
+                            else acc :+ f,
+                          )
+                        step(snapshot, merged, budget - 1, attempted + key)
+                      }
+                  case GateDecision.Deny(reason) =>
+                    log.info(s"Probe denied for $target: $reason")
+                    step(snapshot, findings, budget - 1, attempted + key)
+            case other => // Navigate / Classify: acknowledged, no state change
+              log.info(
+                s"Analyzer decided: $other for $target (no action this slice)",
+              )
+              step(snapshot, findings, budget - 1, attempted)
+          }
 
-  private given ExecutionContext = ctx.executionContext
-
-  def begin(): Behavior[Command] =
-    ctx.pipeToSelf(effects.capture(target)) {
-      case Success(s) => SnapshotReady(s)
-      case Failure(e) => CaptureFailed(Option(e.getMessage).getOrElse(e.toString))
-    }
-    awaitingCapture
-
-  private def awaitingCapture: Behavior[Command] = Behaviors
-    .receiveMessagePartial {
-      case SnapshotReady(snapshot) =>
-        ctx.log.info(
-          "Captured {}: {} cookie(s) [{}], {} localStorage, {} sessionStorage key(s)",
-          target,
-          snapshot.cookies.size,
-          snapshot.cookies.map(_.name).mkString(", "),
-          snapshot.localStorage.size,
-          snapshot.sessionStorage.size,
+    effects.capture(target).transformWith {
+      case Failure(e) =>
+        log.warn(s"Capture failed for $target: ${Option(e.getMessage)
+            .getOrElse(e.toString)}")
+        Future.successful(Vector.empty)
+      case Success(snapshot) =>
+        log.info(
+          s"Captured $target: ${snapshot.cookies.size} cookie(s) " +
+            s"[${snapshot.cookies.map(_.name).mkString(", ")}], " +
+            s"${snapshot.localStorage.size} localStorage, " +
+            s"${snapshot.sessionStorage.size} sessionStorage key(s)",
         )
         val tier1 = Tier1.run(snapshot).toVector
         // A DOM sink-scan is active work (it injects a marker), so it only runs
         // under an authorized active scope; otherwise go straight to the loop.
         ConsentGate.decide(auth, ActionClass.Active, target) match
-          case GateDecision.Permit =>
-            ctx.pipeToSelf(
-              effects.sinkScan(target, InjectionPoint.Fragment, freshMarker()),
-            ) {
-              case Success(sinks) => SinkScanReady(snapshot, sinks)
-              case Failure(_) => SinkScanReady(snapshot, Set.empty)
-            }
-            awaitingSinkScan(tier1)
           case GateDecision.Deny(_) =>
-            // Observe-only: capture + Tier 1 only. No sink-scan, and no analyzer
-            // call (the model is active-path machinery), so it stays free and
-            // fully deterministic.
-            finish(tier1)
-      case CaptureFailed(reason) =>
-        ctx.log.warn("Capture failed for {}: {}", target, reason)
-        finish(Vector.empty)
-    }
-
-  private def awaitingSinkScan(tier1: Vector[Finding]): Behavior[Command] =
-    Behaviors.receiveMessagePartial { case SinkScanReady(snapshot, sinks) =>
-      val dom = SinkScanOp.toFindings(InjectionPoint.Fragment, sinks).toVector
-      // Deterministic, browser-free HTTP probes run together before the model
-      // loop. Each fails soft to no findings.
-      val http = Future.sequence(Seq(
-        effects.redirectScan(target),
-        effects.sqlScan(target),
-        effects.ssrfScan(target),
-      )).map(_.flatten.toVector)
-      ctx.pipeToSelf(http) {
-        case Success(fs) => HttpScanReady(snapshot, tier1 ++ dom ++ fs)
-        case Failure(_) => HttpScanReady(snapshot, tier1 ++ dom)
-      }
-      awaitingHttpScan
-    }
-
-  private def awaitingHttpScan: Behavior[Command] = Behaviors
-    .receiveMessagePartial { case HttpScanReady(snapshot, findings) =>
-      val redirects = findings.count(_.kind == FindingKind.OpenRedirect)
-      val sqli = findings.count(_.kind == FindingKind.SqlInjection)
-      val ssrf = findings.count(_.kind == FindingKind.Ssrf)
-      if redirects > 0 || sqli > 0 || ssrf > 0 then
-        ctx.log.info(
-          "HTTP probes on {}: {} open-redirect, {} SQLi, {} SSRF",
-          target,
-          redirects,
-          sqli,
-          ssrf,
-        )
-      step(snapshot, findings, maxSteps, Set.empty)
-    }
-
-  private def step(
-      snapshot: ClientStateSnapshot,
-      findings: Vector[Finding],
-      budget: Int,
-      attempted: Set[(String, String)],
-  ): Behavior[Command] =
-    if budget <= 0 then finish(findings)
-    else
-      val points = injectionPointsOf(target)
-      ctx.log.info(
-        "Asking analyzer (step {}/{}) for {}: injection points [{}]",
-        maxSteps - budget + 1,
-        maxSteps,
-        target,
-        points.mkString(", "),
-      )
-      val context = AnalyzerContext
-        .fromSnapshot(snapshot, injectionPointIds = points)
-      ctx.pipeToSelf(effects.analyze(context)) {
-        case Success(d) => DecisionReady(d)
-        case Failure(_) => DecisionReady(LlmDecision.Done) // fail closed
-      }
-      awaitingDecision(snapshot, findings, budget, attempted)
-
-  private def awaitingDecision(
-      snapshot: ClientStateSnapshot,
-      findings: Vector[Finding],
-      budget: Int,
-      attempted: Set[(String, String)],
-  ): Behavior[Command] = Behaviors.receiveMessagePartial {
-    case DecisionReady(Done) =>
-      ctx.log.info("Analyzer decided: Done for {}", target)
-      finish(findings)
-    case DecisionReady(Probe(injectionPointId, payloadId)) =>
-      ctx.log.info(
-        "Analyzer decided: Probe param '{}' with payload '{}' on {}",
-        injectionPointId,
-        payloadId,
-        target,
-      )
-      val key = (injectionPointId, payloadId)
-      if attempted.contains(key) then
-        // The analyzer re-selected a probe we already ran; it has converged
-        // with nothing new to try, so finish rather than burn the budget
-        // re-confirming the same finding.
-        ctx.log.info(
-          "Probe '{}'/'{}' already attempted on {}; finishing",
-          injectionPointId,
-          payloadId,
-          target,
-        )
-        finish(findings)
-      else
-        ConsentGate.decide(auth, ActionClass.Active, target) match
+            // Observe-only: capture + Tier 1 only. No sink-scan, no analyzer
+            // call, so it stays free and fully deterministic.
+            Future.successful(tier1)
           case GateDecision.Permit =>
-            val point = InjectionPoint.QueryParam(injectionPointId)
-            ctx.pipeToSelf(effects.probe(target, point, payloadId, freshMarker())) {
-              case Success(f) => ProbeResult(f)
-              case Failure(_) => ProbeResult(None)
+            val sinkF = effects
+              .sinkScan(target, InjectionPoint.Fragment, freshMarker())
+              .recover { case _ => Set.empty[String] }
+            sinkF.flatMap { sinks =>
+              val dom = SinkScanOp.toFindings(InjectionPoint.Fragment, sinks)
+                .toVector
+              // Deterministic, browser-free HTTP probes run together before the
+              // model loop. Each fails soft to no findings.
+              val httpF = Future.sequence(Seq(
+                effects.redirectScan(target),
+                effects.sqlScan(target),
+                effects.ssrfScan(target),
+              )).map(_.flatten.toVector).recover { case _ => Vector.empty }
+              httpF.flatMap { http =>
+                val all = tier1 ++ dom ++ http
+                val redirects = all.count(_.kind == FindingKind.OpenRedirect)
+                val sqli = all.count(_.kind == FindingKind.SqlInjection)
+                val ssrf = all.count(_.kind == FindingKind.Ssrf)
+                if redirects > 0 || sqli > 0 || ssrf > 0 then
+                  log.info(
+                    s"HTTP probes on $target: $redirects open-redirect, " +
+                      s"$sqli SQLi, $ssrf SSRF",
+                  )
+                step(snapshot, all, maxSteps, Set.empty)
+              }
             }
-            awaitingProbe(snapshot, findings, budget, attempted + key)
-          case GateDecision.Deny(reason) =>
-            ctx.log.info("Probe denied for {}: {}", target, reason)
-            step(snapshot, findings, budget - 1, attempted + key)
-    case DecisionReady(other) => // Navigate / Classify: acknowledged, no state change this slice
-      ctx.log.info(
-        "Analyzer decided: {} for {} (no action this slice)",
-        other,
-        target,
-      )
-      step(snapshot, findings, budget - 1, attempted)
-  }
-
-  private def awaitingProbe(
-      snapshot: ClientStateSnapshot,
-      findings: Vector[Finding],
-      budget: Int,
-      attempted: Set[(String, String)],
-  ): Behavior[Command] = Behaviors
-    .receiveMessagePartial { case ProbeResult(found) =>
-      found match
-        case Some(f) => ctx.log
-            .info("Probe CONFIRMED on {}: {}", target, f.evidence)
-        case None => ctx.log
-            .info("Probe not confirmed on {} (no execution)", target)
-      // Dedupe by replay handle so the same finding is never recorded twice.
-      val merged = found.toVector.foldLeft(findings)((acc, f) =>
-        if acc.exists(_.replay == f.replay) then acc else acc :+ f,
-      )
-      step(snapshot, merged, budget - 1, attempted)
     }
-
-  private def finish(findings: Vector[Finding]): Behavior[Command] =
-    ctx.log.info("Scan complete for {}: {} finding(s)", target, findings.size)
-    replyTo ! ScanComplete(target, findings)
-    Behaviors.stopped

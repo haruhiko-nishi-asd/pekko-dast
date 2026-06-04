@@ -4,14 +4,11 @@ import scala.concurrent.ExecutionContext
 import scala.util.Try
 
 import org.apache.pekko.actor.typed.ActorSystem
-import org.apache.pekko.actor.typed.Behavior
-import org.apache.pekko.actor.typed.scaladsl.Behaviors
 
 import dast.AccessControlCheck
 import dast.AccessControlCheck.Identity
 import dast.Authorization
 import dast.DastConfig
-import dast.Finding
 
 /** Runnable IDOR scanner for SPA targets.
   *
@@ -32,10 +29,7 @@ object SpaIdorScannerMain:
       .orElse(DastConfig.get("DAST_ACCESS_SPEC"))
     (url, specPath) match
       case (Some(target), Some(path)) => loadIdentities(path) match
-          case Right((attacker, victim)) => ActorSystem(
-              guardian(target, attacker, victim, authorization),
-              "dast-spa-idor-scanner",
-            )
+          case Right((attacker, victim)) => run(target, attacker, victim)
           case Left(err) =>
             Console.err.println(err)
             sys.exit(2)
@@ -43,6 +37,34 @@ object SpaIdorScannerMain:
         Console.err
           .println("usage: SpaIdorScannerMain <app-url> <identity-spec.json>")
         sys.exit(2)
+
+  private def run(
+      url: String,
+      attacker: Identity,
+      victim: Option[Identity],
+  ): Unit = ScanMain.run("dast-spa-idor-scanner") { ctx =>
+    given ActorSystem[?] = ctx.system
+    given ExecutionContext = ctx.executionContext
+    val auth = authorization
+    ctx.log.info(
+      "SPA IDOR scan of {} (active scope: {}, victim identity: {})",
+      url,
+      if auth.allowActive then auth.authorizedHosts.mkString(",")
+      else "observe-only (skipped)",
+      victim.isDefined,
+    )
+    Scanner.runSpaIdor(
+      ctx,
+      url,
+      attacker,
+      victim,
+      auth,
+      navTimeoutMs,
+      maxHops,
+      postBudget,
+      maxClicks,
+    ).map(fs => FindingsReport.render(url, fs))
+  }
 
   /** Attacker + optional victim. Two-identity IDOR uses identities named
     * `attacker` and `victim`; a single unnamed identity is the attacker (no
@@ -68,48 +90,10 @@ object SpaIdorScannerMain:
   private def navTimeoutMs: Int = DastConfig.getInt("DAST_NAV_TIMEOUT_MS", 30000)
   private def maxHops: Int = DastConfig.getInt("DAST_MAX_HOPS", 6)
   private def postBudget: Int = DastConfig.getInt("DAST_POST_BUDGET", 3)
+  private def maxClicks: Int = DastConfig.getInt("DAST_MAX_CLICKS", 8)
 
   private def authorization: Authorization = DastConfig
     .get("DAST_AUTHORIZED_HOSTS") match
     case Some(hosts) => Authorization
         .active(hosts.split(",").map(_.trim).toIndexedSeq*)
     case None => Authorization.ObserveOnly
-
-  private def guardian(
-      url: String,
-      attacker: Identity,
-      victim: Option[Identity],
-      auth: Authorization,
-  ): Behavior[Vector[Finding]] = Behaviors.setup { ctx =>
-    given ExecutionContext = ctx.executionContext
-    given ActorSystem[?] = ctx.system
-
-    ctx.log.info(
-      "SPA IDOR scan of {} (active scope: {}, victim identity: {})",
-      url,
-      if auth.allowActive then auth.authorizedHosts.mkString(",")
-      else "observe-only (skipped)",
-      victim.isDefined,
-    )
-    ctx.pipeToSelf(Scanner.runSpaIdor(
-      ctx,
-      url,
-      attacker,
-      victim,
-      auth,
-      navTimeoutMs,
-      maxHops,
-      postBudget,
-    )) {
-      case scala.util.Success(fs) => fs
-      case scala.util.Failure(t) =>
-        ctx.log.error("SPA scan failed: {}", t.toString)
-        Vector.empty
-    }
-
-    Behaviors.receiveMessage { findings =>
-      println(FindingsReport.render(url, findings))
-      ctx.log.info("Done; {} finding(s).", findings.size)
-      Behaviors.stopped
-    }
-  }

@@ -27,6 +27,30 @@ class DecisionParserSpec extends AnyWordSpec with Matchers {
       ) shouldBe Right(Navigate(NavIntent.FollowLink("l7")))
     }
 
+    "parse a click action, accepting a number or a numeric string elementId" in {
+      DecisionParser.parse(
+        """{"kind":"navigate","action":{"type":"click","elementId":7}}""",
+      ) shouldBe Right(Navigate(NavIntent.Click(7)))
+      DecisionParser.parse(
+        """{"kind":"navigate","action":{"type":"click","elementId":"7"}}""",
+      ) shouldBe Right(Navigate(NavIntent.Click(7)))
+    }
+
+    "reject a click whose elementId is negative, fractional, or non-numeric" in {
+      DecisionParser.parse(
+        """{"kind":"navigate","action":{"type":"click","elementId":-1}}""",
+      ) shouldBe Left("field 'elementId' must not be negative")
+      DecisionParser.parse(
+        """{"kind":"navigate","action":{"type":"click","elementId":1.5}}""",
+      ) shouldBe Left("field 'elementId' must be an integer")
+      DecisionParser.parse(
+        """{"kind":"navigate","action":{"type":"click","elementId":"rm -rf"}}""",
+      ) shouldBe Left("field 'elementId' must be an integer")
+      DecisionParser
+        .parse("""{"kind":"navigate","action":{"type":"click"}}""") shouldBe
+        Left("missing field 'elementId'")
+    }
+
     "parse classify with each verdict" in {
       DecisionParser.parse(
         """{"kind":"classify","storageKey":"token","verdict":"sensitive"}""",

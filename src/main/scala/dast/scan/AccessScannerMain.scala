@@ -4,14 +4,11 @@ import scala.concurrent.ExecutionContext
 import scala.util.Try
 
 import org.apache.pekko.actor.typed.ActorSystem
-import org.apache.pekko.actor.typed.Behavior
-import org.apache.pekko.actor.typed.scaladsl.Behaviors
 
 import dast.AccessControlCheck
 import dast.AccessControlCheck.AccessSpec
 import dast.Authorization
 import dast.DastConfig
-import dast.Finding
 
 /** Runnable, spec-driven access-control / IDOR scanner.
   *
@@ -31,16 +28,29 @@ object AccessScannerMain:
     case None =>
       Console.err.println("usage: AccessScannerMain <spec.json>")
       sys.exit(2)
-    case Some(path) => readFile(path) match
+    case Some(path) => readFile(path)
+        .flatMap(AccessControlCheck.parseSpec) match
         case Left(err) =>
-          Console.err.println(s"cannot read spec '$path': $err")
+          Console.err.println(s"cannot use spec '$path': $err")
           sys.exit(2)
-        case Right(content) => AccessControlCheck.parseSpec(content) match
-            case Left(err) =>
-              Console.err.println(s"invalid spec: $err")
-              sys.exit(2)
-            case Right(spec) =>
-              ActorSystem(guardian(spec, authorization), "dast-access-scanner")
+        case Right(spec) => run(spec)
+
+  private def run(spec: AccessSpec): Unit = ScanMain
+    .run("dast-access-scanner") { ctx =>
+      given ActorSystem[?] = ctx.system
+      given ExecutionContext = ctx.executionContext
+      val auth = authorization
+      val logins = spec.identities.values.count(_.login.isDefined)
+      ctx.log.info(
+        "Access-control scan: {} case(s), {} login(s), active scope: {}",
+        spec.cases.size,
+        logins,
+        if auth.allowActive then auth.authorizedHosts.mkString(",")
+        else "observe-only (all cases skipped)",
+      )
+      Scanner.runAccess(ctx, spec, auth, navTimeoutMs)
+        .map(fs => FindingsReport.render("access-control", fs))
+    }
 
   private def navTimeoutMs: Int = DastConfig.getInt("DAST_NAV_TIMEOUT_MS", 30000)
 
@@ -54,31 +64,6 @@ object AccessScannerMain:
     val src = scala.io.Source.fromFile(path, "UTF-8")
     try src.mkString
     finally src.close()
-  }.toEither.left.map(e => Option(e.getMessage).getOrElse(e.toString))
-
-  private def guardian(
-      spec: AccessSpec,
-      auth: Authorization,
-  ): Behavior[Vector[Finding]] = Behaviors.setup { ctx =>
-    given ExecutionContext = ctx.executionContext
-    given ActorSystem[?] = ctx.system
-
-    val logins = spec.identities.values.count(_.login.isDefined)
-    ctx.log.info(
-      "Access-control scan: {} case(s), {} login(s), active scope: {}",
-      spec.cases.size,
-      logins,
-      if auth.allowActive then auth.authorizedHosts.mkString(",")
-      else "observe-only (all cases skipped)",
-    )
-    ctx.pipeToSelf(Scanner.runAccess(ctx, spec, auth, navTimeoutMs)) {
-      case scala.util.Success(fs) => fs
-      case scala.util.Failure(_) => Vector.empty
-    }
-
-    Behaviors.receiveMessage { findings =>
-      println(FindingsReport.render("access-control", findings))
-      ctx.log.info("Done; {} finding(s).", findings.size)
-      Behaviors.stopped
-    }
-  }
+  }.toEither.left.map(e =>
+    s"cannot read spec '$path': ${Option(e.getMessage).getOrElse(e.toString)}",
+  )

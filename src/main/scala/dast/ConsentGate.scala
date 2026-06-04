@@ -22,9 +22,14 @@ object GateDecision:
   */
 object ConsentGate:
 
-  /** Classify a model decision: only [[LlmDecision.Probe]] is active. */
+  /** Classify a model decision. A [[LlmDecision.Probe]] is active (it injects),
+    * and so is a `Click` navigation: clicking an enumerated control can submit
+    * a form or otherwise change state, so it must clear the gate.
+    * Link-following and the other navigations are reads, hence passive.
+    */
   def classOf(decision: LlmDecision): ActionClass = decision match
     case _: LlmDecision.Probe => ActionClass.Active
+    case LlmDecision.Navigate(_: NavIntent.Click) => ActionClass.Active
     case _ => ActionClass.Passive
 
   def decide(

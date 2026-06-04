@@ -68,11 +68,16 @@ class ConsentGateSpec extends AnyWordSpec with Matchers {
 
   "ConsentGate.classOf" should {
 
-    "classify only Probe as active" in {
+    "classify Probe and a Click navigation as active, the rest as passive" in {
       ConsentGate.classOf(LlmDecision.Probe("p", "img-onerror")) shouldBe
+        ActionClass.Active
+      ConsentGate.classOf(LlmDecision.Navigate(NavIntent.Click(3))) shouldBe
         ActionClass.Active
       ConsentGate.classOf(LlmDecision.Done) shouldBe ActionClass.Passive
       ConsentGate.classOf(LlmDecision.Navigate(NavIntent.Reload)) shouldBe
+        ActionClass.Passive
+      ConsentGate
+        .classOf(LlmDecision.Navigate(NavIntent.FollowLink("l1"))) shouldBe
         ActionClass.Passive
       ConsentGate
         .classOf(LlmDecision.Classify("k", Sensitivity.Unknown)) shouldBe
