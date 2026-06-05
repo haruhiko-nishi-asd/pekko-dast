@@ -129,6 +129,15 @@ class LlmClientSpec extends AnyWordSpec with Matchers {
       body("systemInstruction")("parts")(0)("text").str shouldBe "sys"
       body("contents")(0)("parts")(0)("text").str shouldBe "user"
     }
+    "bound thinking and size the ceiling so the tool call fits (thinking models)" in {
+      val cfg = body("generationConfig")
+      // Ceiling must exceed the caller's tokens by the thinking budget, so a
+      // reasoning model can't exhaust it before emitting the forced call.
+      cfg("maxOutputTokens").num.toInt should be > 1024
+      cfg("thinkingConfig")("thinkingBudget").num.toInt should be > 0
+      cfg("maxOutputTokens").num.toInt shouldBe
+        (1024 + cfg("thinkingConfig")("thinkingBudget").num.toInt)
+    }
   }
 
   "GeminiClient.toolInput" should {

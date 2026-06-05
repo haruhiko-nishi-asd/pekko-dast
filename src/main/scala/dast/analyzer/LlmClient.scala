@@ -231,6 +231,16 @@ object GeminiClient extends LlmClient:
 
   private val log = LoggerFactory.getLogger("dast.analyzer.GeminiClient")
 
+  /** Reasoning ("thinking") models spend output tokens before emitting the
+    * forced function call, and those `thoughtsTokenCount` tokens count against
+    * `maxOutputTokens`. With a small ceiling the budget is spent thinking first
+    * (`finishReason: MAX_TOKENS`, empty content, no tool call). So we bound
+    * thinking to a fixed budget and raise the ceiling to cover it PLUS the
+    * caller's tokens, guaranteeing the tool call fits. Version-agnostic: on
+    * non-thinking models `thinkingConfig` is ignored, so this is a safe no-op.
+    */
+  private val ThinkingBudget = 2048
+
   def model: String = DastConfig.get("GEMINI_MODEL")
     .getOrElse("gemini-2.0-flash")
 
@@ -260,7 +270,11 @@ object GeminiClient extends LlmClient:
       "functionCallingConfig" ->
         ujson.Obj("mode" -> "ANY", "allowedFunctionNames" -> ujson.Arr(tool.name)),
     ),
-    "generationConfig" -> ujson.Obj("maxOutputTokens" -> maxTokens),
+    "generationConfig" -> ujson.Obj(
+      // Headroom for thinking + the tool call (see ThinkingBudget).
+      "maxOutputTokens" -> (maxTokens + ThinkingBudget),
+      "thinkingConfig" -> ujson.Obj("thinkingBudget" -> ThinkingBudget),
+    ),
   )
 
   /** Pure: the first part's `functionCall.args` object, or None. */
