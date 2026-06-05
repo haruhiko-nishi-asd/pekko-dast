@@ -47,6 +47,8 @@ build/
 .env
 .env.*
 .env.local
+# ...but the committed template (placeholders only) must be tracked
+!.env.example
 
 # operator access-control specs (real captured sessions)
 *.local.json
