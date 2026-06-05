@@ -315,11 +315,11 @@ A note on weight: Pekko is heavier than scanning a handful of URLs strictly need
 
 ### Configure `.env`
 
-Create `.env` in the repo root. `DastConfig` reads it as `KEY=VALUE` (resolution order: real env var, then `.env`, then JVM `-D` property), so no `export` is needed. `.env` is gitignored; keep secrets in it.
+Copy the template and fill it in — `cp .env.example .env`. `DastConfig` reads `.env` as `KEY=VALUE` (resolution order: real env var, then `.env`, then JVM `-D` property), so no `export` is needed. `.env` is gitignored; keep secrets in it. `.env.example` lists every key with placeholders; the essentials:
 
 ```dotenv
 ANTHROPIC_API_KEY=sk-ant-...
-DAST_AUTHORIZED_HOSTS=target.example
+DAST_AUTHORIZED_HOSTS=target.example   # empty = observe-only (no active probing)
 # DAST_OAST_BASE_URL=http://your-oast-listener
 # DAST_LLM_PROVIDER=anthropic   # or: openai (OPENAI_API_KEY) / gemini (GEMINI_API_KEY)
 ```
