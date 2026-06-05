@@ -26,6 +26,7 @@
 #   ./scripts/scan.sh https://target.example/app
 #   ./scripts/scan.sh https://target.example/app spec.json
 set -euo pipefail
+ORIG_PWD="$PWD"
 cd "$(dirname "$0")/.."
 
 URL="${1:-}"
@@ -35,9 +36,17 @@ if [[ -z "$URL" ]]; then
   echo "usage: $0 <target-url> [identity-spec.json]" >&2
   exit 2
 fi
-if [[ -n "$SPEC" && ! -f "$SPEC" ]]; then
-  echo "spec file not found: $SPEC" >&2
-  exit 2
+if [[ -n "$SPEC" ]]; then
+  # We cd'd to the repo root above, so a spec path relative to your shell's CWD
+  # would be looked for in the wrong place. Resolve it against the directory you
+  # invoked the script from before giving up.
+  if [[ ! -f "$SPEC" && -f "$ORIG_PWD/$SPEC" ]]; then
+    SPEC="$ORIG_PWD/$SPEC"
+  fi
+  if [[ ! -f "$SPEC" ]]; then
+    echo "spec file not found: $SPEC" >&2
+    exit 2
+  fi
 fi
 if [[ ! -f .env ]]; then
   echo "warning: no .env in $(pwd) -- run will be observe-only unless config is in the environment" >&2
