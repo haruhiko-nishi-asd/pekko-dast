@@ -527,6 +527,7 @@ object Scanner:
       stealth = false,
       userAgent = Some("pekko-dast-scanner/0.1 (+authorized security testing)"),
       traceDir = dast.DastConfig.get("DAST_TRACE_DIR").filter(_.nonEmpty),
+      videoDir = dast.DastConfig.get("DAST_VIDEO_DIR").filter(_.nonEmpty),
     )
 
   private def makeBrowser(navTimeoutMs: Int): Int => BrowserResource = i =>

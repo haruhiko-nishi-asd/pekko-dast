@@ -111,7 +111,7 @@ final class BrowserResource(
     * up localStorage/session that subsequent navigation needs).
     */
   def navOpen(cookies: Seq[(String, String)], baseUrl: String): Unit = {
-    navCtx = newContext(trace = true)
+    navCtx = newContext(record = true)
     if (cookies.nonEmpty) navCtx.addCookies(
       cookies.map((n, v) => new PwCookie(n, v).setUrl(baseUrl)).asJava,
     )
@@ -352,16 +352,25 @@ final class BrowserResource(
 
   /** Close the nav page and its context. */
   def navStop(): Unit = {
+    // Grab the video handle before closing; its file is finalised on close.
+    val video =
+      if (navPage != null && settings.videoDir.isDefined)
+        Option(navPage.video())
+      else None
     try if (navPage != null) navPage.close()
     catch { case _: Exception => () }
     if (navCtx != null) stopTrace(navCtx) // write the trace before closing
     try if (navCtx != null) navCtx.close()
     catch { case _: Exception => () }
+    video.foreach(v =>
+      try log.info("wrote video {}", v.path())
+      catch { case _: Exception => () },
+    )
     navPage = null
     navCtx = null
   }
 
-  private def newContext(trace: Boolean = false): BrowserContext = {
+  private def newContext(record: Boolean = false): BrowserContext = {
     // Match a current real Chrome for scraping (bot managers flag stale majors);
     // the scanner overrides this with an identifiable UA.
     val chromeUA =
@@ -371,8 +380,15 @@ final class BrowserResource(
       .setUserAgent(settings.userAgent.getOrElse(chromeUA))
       .setViewportSize(1280, 800).setLocale("en-US")
       .setTimezoneId("America/New_York")
+    // Video must be requested at context creation; it flushes on close.
+    if (record) settings.videoDir.foreach { dir =>
+      val d = java.nio.file.Paths.get(dir)
+      try Files.createDirectories(d)
+      catch { case _: Exception => () }
+      opts.setRecordVideoDir(d)
+    }
     val c = browser.newContext(opts)
-    if (trace && settings.traceDir.isDefined)
+    if (record && settings.traceDir.isDefined)
       c.tracing().start(
         new Tracing.StartOptions().setScreenshots(true).setSnapshots(true)
           .setSources(true),
@@ -432,6 +448,8 @@ object BrowserResource {
       // When set, the authenticated nav session records a Playwright trace
       // (screenshots + DOM snapshots per action) into this directory.
       traceDir: Option[String] = None,
+      // When set, the nav session records a .webm video into this directory.
+      videoDir: Option[String] = None,
   )
 
   /** Sent as the X-Scanner header on non-stealth (DAST) contexts so a
