@@ -28,14 +28,34 @@ object ScanMain:
   ): Unit =
     val guardian = Behaviors.setup[Nothing] { ctx =>
       given ExecutionContext = ctx.executionContext
-      scan(ctx).onComplete {
-        case Success(report) =>
-          println(report)
-          ctx.system.terminate()
-        case Failure(e) =>
-          ctx.log.error("Scan failed: {}", e.toString)
-          ctx.system.terminate()
+      scan(ctx).onComplete { result =>
+        // Persist the evidence transcript (no-op unless DAST_EVIDENCE_FILE set).
+        dast.EvidenceLog.flush()
+        result match
+          case Success(report) =>
+            println(report)
+            // Self-contained HTML view (no-op unless DAST_REPORT_FILE set).
+            writeHtmlReport(report)
+          case Failure(e) => ctx.log.error("Scan failed: {}", e.toString)
+        ctx.system.terminate()
       }
       Behaviors.empty
     }
     ActorSystem[Nothing](guardian, systemName)
+
+  /** Write a self-contained HTML view of the run to `DAST_REPORT_FILE`, pairing
+    * the findings with the in-memory evidence transcript. Best-effort and
+    * off by default -- no file, no cost, unless the var is set.
+    */
+  private def writeHtmlReport(reportJson: String): Unit = dast.DastConfig
+    .get("DAST_REPORT_FILE").filter(_.nonEmpty).foreach { path =>
+      try
+        val report = ujson.read(reportJson)
+        val evidence = dast.EvidenceLog.render().linesIterator
+          .filter(_.nonEmpty).map(ujson.read(_)).toSeq
+        java.nio.file.Files.writeString(
+          java.nio.file.Paths.get(path),
+          ReportHtml.render(report, evidence),
+        )
+      catch { case _: Exception => () }
+    }

@@ -330,7 +330,7 @@ DAST_AUTHORIZED_HOSTS=target.example
 |---|---|---|---|
 | `DAST_LLM_PROVIDER` | `anthropic` | LLM 主導の全ステップ | プランナが呼ぶ API: `anthropic` / `openai` / `gemini`。 |
 | `ANTHROPIC_API_KEY` | （なし） | アナライザ、IDOR/ナビのプランナ | LLM 主導ステップ（XSS 誘導、IDOR 立案、ナビ）。未設定ならそれらはフェイルクローズしてスキップ。決定的チェックは動きます。 |
-| `ANTHROPIC_MODEL` | `claude-opus-4-8` | アナライザ、プランナ | モデル id（プロバイダが `anthropic` のとき）。 |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-6` | アナライザ、プランナ | モデル id（プロバイダが `anthropic` のとき）。既定は Sonnet：スキャン中で最も難しい判断であるクロスアカウント IDOR の確定を、Opus の約 1/5 のトークンコストで通す（より安価な Haiku 系は取りこぼすことが確認された）。最大限の推論には `claude-opus-4-8`、コスト最小化には Haiku 系を指定。 |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | （なし） / `gpt-4o` | プロバイダが `openai` のとき | OpenAI のキーとモデル。 |
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | （なし） / `gemini-2.0-flash` | プロバイダが `gemini` のとき | Gemini のキーとモデル。 |
 | `DAST_AUTHORIZED_HOSTS` | （なし → 観測のみ） | 全スキャナ main | 能動的に探査してよいホストのカンマ区切り。 |
@@ -342,6 +342,8 @@ DAST_AUTHORIZED_HOSTS=target.example
 | `DAST_MAX_HOPS` | `4`（Idor） / `6`（SpaIdor） | Idor, SpaIdor | LLM ナビゲーションのホップ数。 |
 | `DAST_POST_BUDGET` | `3` | Idor, SpaIdor | 1 回の実行での POST ナビゲーション上限。 |
 | `DAST_MAX_CLICKS` | `8` | SpaIdor | ボタン依存の探索でページ間に共有するクリック予算（`0` でクリック無効）。 |
+| `DAST_EVIDENCE_FILE` | （未設定→無効） | すべての main | JSON Lines の証跡を書き出すパス。対象への各 HTTP リクエスト（注入ペイロード・応答ステータス/ヘッダ/所要時間）と各 XSS の判定を記録し、スキャンの実施を証明・再現可能にします。未設定なら無効。 |
+| `DAST_REPORT_FILE` | （未設定→無効） | すべての main | 自己完結型の HTML レポートを書き出すパス。検出結果（深刻度・根拠・replay ハンドル）に加えて上記の証跡を 1 ファイルにまとめ、ブラウザで開いたり共有したりできます。スキャンが既に生成した出力の読み取り専用ビューで、サーバは不要。未設定なら無効。 |
 | `DAST_MAX_CONCURRENCY` | `4` | グローバル HTTP スロットル | 対象への同時リクエスト上限（バックプレッシャ）。 |
 
 プロバイダの切り替えはコードではなく設定の変更です（3 つとも 1 つの `LlmClient` 継ぎ目を通ります）。確認が決定的なので、プロバイダの選択は再現率に影響しても健全性には影響しません。データに関する注記: どのプロバイダを選んでも、プランナは認証済みページの HTML と観測したリクエスト URL（実在のオブジェクト id を含む）をその API に送ります。これはプライバシー上の判断として扱ってください。
@@ -446,6 +448,19 @@ sbt "runMain dast.scan.SpaIdorScannerMain https://target.example/ spec.json"
 `SiteScannerMain` は代わりにサイトレポートを出します。`seed`、合計 `findingCount`、`{ url, findings }` の `pages` 配列です。各検出は `kind`（`InsecureCookie`・`SecretInStorage`・`MissingSecurityHeader`・`OpenRedirect`・`SqlInjection`・`Ssti`・`PathTraversal`・`Cors`・`JwtWeakness`・`Ssrf`・`Xss`・`BrokenAccessControl`）、`severity`、1 行の `evidence`、`reproducible` フラグ（単なる疑いでなく確認済みなら true）、モデル無しで再現できる `replay` ハンドル（例: `header:content-security-policy@<url>` や `access case='...' as=attacker url=...`）を持ちます。
 
 `"findingCount": 0` の実行は失敗ではなく正当な結果です。IDOR スキャナにとっては、アプリが所有権を強制し、他アカウントのレコードが返らなかったことを意味します。
+
+### HTML レポート
+
+`DAST_REPORT_FILE` を設定すると、実行結果の自己完結型 HTML ビューも書き出します。検出結果に加えて、任意の証跡（`DAST_EVIDENCE_FILE`）を 1 ファイルにまとめ、ブラウザで開いたり共有したりできます。スキャンが既に生成した出力の読み取り専用レンダリングで、サーバは不要。変数が未設定なら無効です。
+
+```bash
+DAST_AUTHORIZED_HOSTS=… DAST_EVIDENCE_FILE=/tmp/ev.jsonl DAST_REPORT_FILE=/tmp/report.html \
+  sbt -batch "runMain dast.scan.SpaIdorScannerMain <url> <spec>"
+```
+
+![HTML レポートの例](docs/sample-report.png)
+
+<sub>プレースホルダのデータです。`target.example` / `victim-co.example` は予約済みのサンプル用ドメインで、実在の検出ではありません。</sub>
 
 ### 補足
 

@@ -114,7 +114,7 @@ object IdorProbe:
     val hs = headers.RawHeader("User-Agent", UserAgent) ::
       cookie.map(c => headers.RawHeader("Cookie", c)).toList
     val request = HttpRequest(method = HttpMethods.GET, uri = url, headers = hs)
-    HttpThrottle(Http()(system).singleRequest(request)).flatMap { response =>
+    ProbeHttp.send("idor", request).flatMap { response =>
       Unmarshal(response.entity).to[String]
         .map(body => Some((response.status.intValue(), body)))
     }.recover { case t =>

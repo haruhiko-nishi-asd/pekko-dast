@@ -26,18 +26,28 @@ object ContentIdorProbe:
   private val UserAgent =
     "pekko-dast-scanner/0.1 (+authorized security testing)"
 
-  def run(proposals: Seq[Proposal], cookie: Option[String], auth: Authorization)(
-      using
+  /** `markers` are model-free leak tokens harvested from the OTHER account's
+    * content (see [[ContentIdor.markersFrom]]); they back up the model's `leak`
+    * so recall does not depend on the model naming the right data string.
+    */
+  def run(
+      proposals: Seq[Proposal],
+      cookie: Option[String],
+      auth: Authorization,
+      markers: Seq[String] = Nil,
+  )(using
       system: ActorSystem[?],
       ec: ExecutionContext,
   ): Future[Vector[Finding]] = Future
-    .sequence(proposals.map(p => probe(p, cookie, auth))).map(_.flatten.toVector)
+    .sequence(proposals.map(p => probe(p, cookie, auth, markers)))
+    .map(_.flatten.toVector)
 
-  private def probe(p: Proposal, cookie: Option[String], auth: Authorization)(
-      using
-      ActorSystem[?],
-      ExecutionContext,
-  ): Future[Option[Finding]] =
+  private def probe(
+      p: Proposal,
+      cookie: Option[String],
+      auth: Authorization,
+      markers: Seq[String],
+  )(using ActorSystem[?], ExecutionContext): Future[Option[Finding]] =
     val baselineUrl = ContentIdor.fill(p.urlTemplate, p.ownValue)
     ConsentGate.decide(auth, ActionClass.Active, baselineUrl) match
       case GateDecision.Deny(reason) =>
@@ -45,11 +55,39 @@ object ContentIdorProbe:
         Future.successful(None)
       case GateDecision.Permit => fetch(p, p.ownValue, cookie).flatMap {
           case Some((s, body)) if s >= 200 && s <= 299 =>
-            IdorPlan.extractField(body, p.discriminatorField) match
-              case None => Future.successful(None)
-              case Some(own) => firstHit(p, own, cookie)
+            // Leak markers (work on HTML): the model's data leak plus tokens
+            // harvested deterministically from the OTHER account's content.
+            // Drop any that is an id in play (ids echo, proving nothing).
+            val leakMarkers = (ContentIdor.dataLeak(p).toSeq ++ markers)
+              .distinct.filter(m => m != p.ownValue && !p.candidates.contains(m))
+            if leakMarkers.nonEmpty then
+              firstHitLeak(p, body, leakMarkers, cookie)
+            // JSON field: the per-user field differing from this baseline.
+            else
+              IdorPlan.extractField(body, p.discriminatorField) match
+                case None => Future.successful(None)
+                case Some(own) => firstHit(p, own, cookie)
           case _ => Future.successful(None)
         }
+
+  private def firstHitLeak(
+      p: Proposal,
+      ownBody: String,
+      markers: Seq[String],
+      cookie: Option[String],
+  )(using ActorSystem[?], ExecutionContext): Future[Option[Finding]] = p
+    .candidates
+    .foldLeft(Future.successful(Option.empty[Finding])) { (acc, candidate) =>
+      acc.flatMap {
+        case some @ Some(_) => Future.successful(some)
+        case None => fetch(p, candidate, cookie).map {
+            case Some((s, body)) if s >= 200 && s <= 299 =>
+              markers.find(m => ContentIdor.confirmsLeak(ownBody, body, m))
+                .map(m => ContentIdor.leakFinding(p, candidate, m))
+            case _ => None
+          }
+      }
+    }
 
   private def firstHit(p: Proposal, ownValue: String, cookie: Option[String])(
       using
@@ -94,7 +132,7 @@ object ContentIdorProbe:
           ),
         )
       else HttpRequest(HttpMethods.GET, ContentIdor.fill(p.urlTemplate, id), hs)
-    HttpThrottle(Http()(system).singleRequest(request)).flatMap { response =>
+    ProbeHttp.send("content-idor", request).flatMap { response =>
       Unmarshal(response.entity).to[String]
         .map(body => Some((response.status.intValue(), body)))
     }.recover { case t =>

@@ -238,8 +238,21 @@ object Scanner:
                 ContentIdorPlanner
                   .planCross(pages, reqs, victimPages, victimRequests)
               else ContentIdorPlanner.plan(pages, reqs)
+            // Model-free leak markers: distinctive tokens (emails, domains) in
+            // the victim's content that aren't in the attacker's own. If one
+            // appears in the attacker's response to a candidate id, it leaked --
+            // sound, and recall no longer depends on the model naming the right
+            // string.
+            val markers = dast.ContentIdor.markersFrom(
+              victimPages.map(_._2).mkString("\n"),
+              pages.map(_._2).mkString("\n"),
+            )
             proposalsF.flatMap { proposals =>
-              log.info("Content-IDOR: {} proposal(s)", proposals.size)
+              log.info(
+                "Content-IDOR: {} proposal(s), {} leak marker(s)",
+                proposals.size,
+                markers.size,
+              )
               proposals.foreach(p =>
                 log.info(
                   "  test: {} {} ({} candidate id(s), field={})",
@@ -249,7 +262,7 @@ object Scanner:
                   p.discriminatorField,
                 ),
               )
-              ContentIdorProbe.run(proposals, cookie, auth)
+              ContentIdorProbe.run(proposals, cookie, auth, markers)
             }
           }
         }

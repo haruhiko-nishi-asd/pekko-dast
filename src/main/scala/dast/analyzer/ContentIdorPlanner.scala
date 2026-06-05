@@ -49,11 +49,17 @@ object ContentIdorPlanner:
     "param, path segment, or POST body field), `ownValue` = an object id from " +
     "YOUR pages (baseline), and `candidates` = object ids from the OTHER " +
     "account's pages (objects that belong to them, not you). The candidates " +
-    "MUST be real ids seen in the other account's pages; never invent. " +
-    "`discriminatorField` = the per-user response field that would reveal the " +
-    "other account's record. We request the candidates AS YOU; if their " +
-    "object comes back, that is IDOR. Empty list if there is no object " +
-    "reference to test. You never write code."
+    "MUST be real ids seen in the OTHER account's pages, and MUST NOT be ids " +
+    "from your own pages; never invent. Then give `leak`: a SHORT distinctive " +
+    "piece of the OTHER account's DATA copied verbatim (a creative name, brand, " +
+    "domain, email, or title) that belongs to them and would NOT appear on your " +
+    "own pages. CRITICAL: `leak` must be human-readable DATA, NEVER an id, " +
+    "ULID, UUID, or the campaignId itself — ids echo into the page and prove " +
+    "nothing. We confirm IDOR when that exact data string appears in the " +
+    "response to a candidate id. Prefer `leak` (it works for HTML pages too); " +
+    "use `discriminatorField` only for a JSON API field. We request the " +
+    "candidates AS YOU; if their data comes back, that is IDOR. Empty list if " +
+    "there is no object reference to test. You never write code."
 
   private val schema: ujson.Value = ujson.Obj(
     "type" -> "object",
@@ -72,10 +78,9 @@ object ContentIdorPlanner:
               ujson
                 .Obj("type" -> "array", "items" -> ujson.Obj("type" -> "string")),
             "discriminatorField" -> ujson.Obj("type" -> "string"),
+            "leak" -> ujson.Obj("type" -> "string"),
           ),
-          "required" ->
-            ujson
-              .Arr("urlTemplate", "ownValue", "candidates", "discriminatorField"),
+          "required" -> ujson.Arr("urlTemplate", "ownValue", "candidates"),
         ),
       ),
     ),

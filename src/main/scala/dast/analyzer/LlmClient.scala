@@ -91,8 +91,13 @@ object AnthropicClient extends LlmClient:
   val Endpoint = "https://api.anthropic.com/v1/messages"
   val Version = "2023-06-01"
 
+  // Sonnet is the default: it catches the cross-account IDOR step (the hardest
+  // judgment in a scan) at roughly a fifth of Opus's token cost, while the
+  // cheaper Haiku tier was observed to miss it. Override with ANTHROPIC_MODEL
+  // (e.g. claude-opus-4-8) for maximum reasoning, or a Haiku tier to minimise
+  // cost on simpler targets.
   def model: String = DastConfig.get("ANTHROPIC_MODEL")
-    .getOrElse("claude-opus-4-8")
+    .getOrElse("claude-sonnet-4-6")
 
   /** Pure: the Messages request body. No sampling/thinking params. */
   def requestBody(

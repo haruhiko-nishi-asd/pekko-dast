@@ -328,7 +328,7 @@ DAST_AUTHORIZED_HOSTS=target.example
 |---|---|---|---|
 | `DAST_LLM_PROVIDER` | `anthropic` | all LLM-directed steps | Which API the planners call: `anthropic` / `openai` / `gemini`. |
 | `ANTHROPIC_API_KEY` | (none) | analyzer, IDOR/nav planners | LLM-directed steps (XSS direction, IDOR planning, nav). Absent: those steps fail closed and are skipped; deterministic checks still run. |
-| `ANTHROPIC_MODEL` | `claude-opus-4-8` | analyzer, planners | Model id (when provider is `anthropic`). |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-6` | analyzer, planners | Model id (when provider is `anthropic`). Sonnet is the default: it confirms the cross-account IDOR step (a scan's hardest judgment) at ~1/5 of Opus's token cost, where the cheaper Haiku tier was seen to miss it. Set `claude-opus-4-8` for maximum reasoning, or a Haiku tier to minimise cost. |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | (none) / `gpt-4o` | when provider is `openai` | OpenAI key and model. |
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | (none) / `gemini-2.0-flash` | when provider is `gemini` | Gemini key and model. |
 | `DAST_AUTHORIZED_HOSTS` | (none -> observe-only) | all scanner mains | Comma-separated hosts that may be actively probed. |
@@ -340,6 +340,8 @@ DAST_AUTHORIZED_HOSTS=target.example
 | `DAST_MAX_HOPS` | `4` (Idor) / `6` (SpaIdor) | Idor, SpaIdor | LLM navigation hops. |
 | `DAST_POST_BUDGET` | `3` | Idor, SpaIdor | Max POST navigation actions per run. |
 | `DAST_MAX_CLICKS` | `8` | SpaIdor | Click budget shared across pages for button-gated exploration (`0` disables clicking). |
+| `DAST_EVIDENCE_FILE` | (none -> off) | all scanner mains | Path to write a JSON-Lines evidence transcript: every target HTTP request (with its injected payload, response status/headers/timing) and each XSS verdict, so a scan's work is provable and replayable. Off when unset. |
+| `DAST_REPORT_FILE` | (none -> off) | all scanner mains | Path to write a self-contained HTML report: the findings (severity, evidence, replay handle) plus the evidence transcript above, in one file you can open in a browser or share. Read-only view of output the scan already produced -- no server. Off when unset. |
 | `DAST_MAX_CONCURRENCY` | `4` | global HTTP throttle | In-flight request cap against the target (backpressure). |
 
 Switching provider is a config change, not code (all three go through the one `LlmClient` seam), and because confirmation is deterministic the provider affects recall, not soundness. Note on data: whichever provider you pick, the planners send authenticated page HTML and observed request URLs (with real object ids) to that API, so treat the choice as a privacy decision.
@@ -444,6 +446,19 @@ Each main prints a JSON report to stdout:
 `SiteScannerMain` emits a site report instead: `seed`, total `findingCount`, and a `pages` array of `{ url, findings }`. Each finding has a `kind` (`InsecureCookie`, `SecretInStorage`, `MissingSecurityHeader`, `OpenRedirect`, `SqlInjection`, `Ssti`, `PathTraversal`, `Cors`, `JwtWeakness`, `Ssrf`, `Xss`, `BrokenAccessControl`), a `severity`, one line of `evidence`, a `reproducible` flag (true when confirmed, not merely suspected), and a `replay` handle that reproduces it without the model (e.g. `header:content-security-policy@<url>` or `access case='...' as=attacker url=...`).
 
 A run with `"findingCount": 0` is a real result, not a failure: for the IDOR scanners it means the app enforced ownership and no cross-account record came back.
+
+### HTML report
+
+Set `DAST_REPORT_FILE` to also write a self-contained HTML view of the run — the same findings plus the opt-in evidence transcript (`DAST_EVIDENCE_FILE`), in one file you can open in a browser or hand off. It is a read-only render of output the scan already produced: no server, and off unless the variable is set.
+
+```bash
+DAST_AUTHORIZED_HOSTS=… DAST_EVIDENCE_FILE=/tmp/ev.jsonl DAST_REPORT_FILE=/tmp/report.html \
+  sbt -batch "runMain dast.scan.SpaIdorScannerMain <url> <spec>"
+```
+
+![Sample HTML report](docs/sample-report.png)
+
+<sub>Placeholder data — `target.example` / `victim-co.example` are reserved example domains, not a real finding.</sub>
 
 ### Notes
 
