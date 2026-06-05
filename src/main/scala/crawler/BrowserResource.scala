@@ -111,7 +111,7 @@ final class BrowserResource(
     * up localStorage/session that subsequent navigation needs).
     */
   def navOpen(cookies: Seq[(String, String)], baseUrl: String): Unit = {
-    navCtx = newContext()
+    navCtx = newContext(trace = true)
     if (cookies.nonEmpty) navCtx.addCookies(
       cookies.map((n, v) => new PwCookie(n, v).setUrl(baseUrl)).asJava,
     )
@@ -354,13 +354,14 @@ final class BrowserResource(
   def navStop(): Unit = {
     try if (navPage != null) navPage.close()
     catch { case _: Exception => () }
+    if (navCtx != null) stopTrace(navCtx) // write the trace before closing
     try if (navCtx != null) navCtx.close()
     catch { case _: Exception => () }
     navPage = null
     navCtx = null
   }
 
-  private def newContext(): BrowserContext = {
+  private def newContext(trace: Boolean = false): BrowserContext = {
     // Match a current real Chrome for scraping (bot managers flag stale majors);
     // the scanner overrides this with an identifiable UA.
     val chromeUA =
@@ -371,11 +372,33 @@ final class BrowserResource(
       .setViewportSize(1280, 800).setLocale("en-US")
       .setTimezoneId("America/New_York")
     val c = browser.newContext(opts)
+    if (trace && settings.traceDir.isDefined)
+      c.tracing().start(
+        new Tracing.StartOptions().setScreenshots(true).setSnapshots(true)
+          .setSources(true),
+      )
     if (settings.stealth) c.addInitScript(stealthScript)
     else
       // Be identifiable, not evasive (README).
       c.setExtraHTTPHeaders(java.util.Map.of("X-Scanner", ScannerHeader))
     c
+  }
+
+  /** Stop the trace started on `c` (if tracing is on) and write it as a zip,
+    * openable with `npx playwright show-trace` or trace.playwright.dev.
+    * Best-effort; must run before the context is closed. The session number is
+    * process-global so traces from separate pools/resources never collide.
+    */
+  private def stopTrace(c: BrowserContext): Unit = settings.traceDir.foreach {
+    dir =>
+      try {
+        val d = java.nio.file.Paths.get(dir)
+        Files.createDirectories(d)
+        val n = traceCounter.incrementAndGet()
+        val out = d.resolve(f"trace-session$n%03d.zip")
+        c.tracing().stop(new Tracing.StopOptions().setPath(out))
+        log.info("wrote Playwright trace {}", out)
+      } catch { case _: Exception => () }
   }
 
   override def close(): Unit = {
@@ -394,6 +417,11 @@ final class BrowserResource(
 
 object BrowserResource {
 
+  /** Process-global so trace files from separate pools/resources never collide
+    * (attacker and victim sessions run on independent resources, both id 0).
+    */
+  private val traceCounter = new java.util.concurrent.atomic.AtomicInteger(0)
+
   final case class Settings(
       navigationTimeoutMs: Int = 15000,
       // The DAST path sets stealth = false so it is identifiable, not evasive
@@ -401,6 +429,9 @@ object BrowserResource {
       stealth: Boolean = true,
       // Overrides the user agent when set (the scanner announces itself).
       userAgent: Option[String] = None,
+      // When set, the authenticated nav session records a Playwright trace
+      // (screenshots + DOM snapshots per action) into this directory.
+      traceDir: Option[String] = None,
   )
 
   /** Sent as the X-Scanner header on non-stealth (DAST) contexts so a

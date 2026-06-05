@@ -518,16 +518,19 @@ object Scanner:
           .map(_.action).getOrElse(fi.toString)}:${values.toSeq.sorted}"
     case NavStep.Done => "done"
 
-  private def makeBrowser(navTimeoutMs: Int): Int => BrowserResource = i =>
-    new BrowserResource(
-      i,
-      None,
-      BrowserResource.Settings(
-        navigationTimeoutMs = navTimeoutMs,
-        stealth = false,
-        userAgent = Some("pekko-dast-scanner/0.1 (+authorized security testing)"),
-      ),
+  /** Identifiable (non-stealth) browser settings for the DAST path, with the
+    * opt-in Playwright trace dir (`DAST_TRACE_DIR`) threaded in.
+    */
+  private def dastSettings(navTimeoutMs: Int): BrowserResource.Settings =
+    BrowserResource.Settings(
+      navigationTimeoutMs = navTimeoutMs,
+      stealth = false,
+      userAgent = Some("pekko-dast-scanner/0.1 (+authorized security testing)"),
+      traceDir = dast.DastConfig.get("DAST_TRACE_DIR").filter(_.nonEmpty),
     )
+
+  private def makeBrowser(navTimeoutMs: Int): Int => BrowserResource = i =>
+    new BrowserResource(i, None, dastSettings(navTimeoutMs))
 
   /** Submit one unit of work to a dedicated session and get its result. */
   private def sessionSubmit[T](
@@ -622,17 +625,7 @@ object Scanner:
     val poolRef = ctx.spawn(
       ResourcePool[BrowserResource](
         size = poolSize,
-        make = i =>
-          new BrowserResource(
-            i,
-            None,
-            BrowserResource.Settings(
-              navigationTimeoutMs = navTimeoutMs,
-              stealth = false,
-              userAgent =
-                Some("pekko-dast-scanner/0.1 (+authorized security testing)"),
-            ),
-          ),
+        make = i => new BrowserResource(i, None, dastSettings(navTimeoutMs)),
       ),
       s"dast-browser-pool-${poolCounter.incrementAndGet()}",
     )
