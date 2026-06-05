@@ -69,6 +69,28 @@ class AccessControlCheckSpec extends AnyWordSpec with Matchers {
     "return Left on malformed JSON" in {
       AccessControlCheck.parseSpec("not json").isLeft shouldBe true
     }
+
+    // Guards the shipped example specs: if either drifts from the schema (or a
+    // `_comment` lands somewhere the parser would choke on), this fails.
+    "parse the shipped example specs" in {
+      val access = AccessControlCheck.parseSpec(
+        java.nio.file.Files
+          .readString(java.nio.file.Paths.get("scripts/access-spec.example.json")),
+      )
+      access.isRight shouldBe true
+
+      val idor = AccessControlCheck.parseSpec(
+        java.nio.file.Files
+          .readString(java.nio.file.Paths.get("scripts/idor-spec.example.json")),
+      ).toOption.get
+      // All three auth methods are exercised, attacker/victim are present for the
+      // IDOR scanners, and the unauthenticated case parses to identity = None.
+      idor.identities("attacker").login.map(_.username) shouldBe
+        Some("attacker@example.com")
+      idor.identities("victim").cookie.isDefined shouldBe true
+      idor.identities("reader").headers.contains("Authorization") shouldBe true
+      idor.cases.exists(_.identity.isEmpty) shouldBe true
+    }
   }
 
   "AccessControlCheck.toFinding" should {
