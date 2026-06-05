@@ -328,7 +328,7 @@ DAST_AUTHORIZED_HOSTS=target.example
 |---|---|---|---|
 | `DAST_LLM_PROVIDER` | `anthropic` | all LLM-directed steps | Which API the planners call: `anthropic` / `openai` / `gemini`. |
 | `ANTHROPIC_API_KEY` | (none) | analyzer, IDOR/nav planners | LLM-directed steps (XSS direction, IDOR planning, nav). Absent: those steps fail closed and are skipped; deterministic checks still run. |
-| `ANTHROPIC_MODEL` | `claude-opus-4-8` | analyzer, planners | Model id (when provider is `anthropic`). |
+| `ANTHROPIC_MODEL` | `claude-sonnet-4-6` | analyzer, planners | Model id (when provider is `anthropic`). Sonnet is the default: it confirms the cross-account IDOR step (a scan's hardest judgment) at ~1/5 of Opus's token cost, where the cheaper Haiku tier was seen to miss it. Set `claude-opus-4-8` for maximum reasoning, or a Haiku tier to minimise cost. |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | (none) / `gpt-4o` | when provider is `openai` | OpenAI key and model. |
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | (none) / `gemini-2.0-flash` | when provider is `gemini` | Gemini key and model. |
 | `DAST_AUTHORIZED_HOSTS` | (none -> observe-only) | all scanner mains | Comma-separated hosts that may be actively probed. |
@@ -341,6 +341,7 @@ DAST_AUTHORIZED_HOSTS=target.example
 | `DAST_POST_BUDGET` | `3` | Idor, SpaIdor | Max POST navigation actions per run. |
 | `DAST_MAX_CLICKS` | `8` | SpaIdor | Click budget shared across pages for button-gated exploration (`0` disables clicking). |
 | `DAST_EVIDENCE_FILE` | (none -> off) | all scanner mains | Path to write a JSON-Lines evidence transcript: every target HTTP request (with its injected payload, response status/headers/timing) and each XSS verdict, so a scan's work is provable and replayable. Off when unset. |
+| `DAST_REPORT_FILE` | (none -> off) | all scanner mains | Path to write a self-contained HTML report: the findings (severity, evidence, replay handle) plus the evidence transcript above, in one file you can open in a browser or share. Read-only view of output the scan already produced -- no server. Off when unset. |
 | `DAST_MAX_CONCURRENCY` | `4` | global HTTP throttle | In-flight request cap against the target (backpressure). |
 
 Switching provider is a config change, not code (all three go through the one `LlmClient` seam), and because confirmation is deterministic the provider affects recall, not soundness. Note on data: whichever provider you pick, the planners send authenticated page HTML and observed request URLs (with real object ids) to that API, so treat the choice as a privacy decision.
