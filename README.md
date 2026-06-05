@@ -385,6 +385,8 @@ How the two consumers use it:
 - **`AccessScannerMain`** runs the **`cases`** array. Each case requests `url` as `identity` (or unauthenticated when `identity` is `null`) and is a finding if the response is 2xx and its body contains `mustContain`. `cases` may be empty.
 - **`IdorScannerMain` / `SpaIdorScannerMain`** ignore `cases` and use the **identities** only: one named `attacker` (or the lone identity if there is exactly one) and an optional `victim`. With a `victim` it is a two-identity test: log in as both, harvest the victim's object ids, then try to read them while authenticated as the attacker.
 
+Two ready-to-copy specs ship in `scripts/`: **`idor-spec.example.json`** — an annotated template covering all three auth methods (`login` / `cookie` / `headers`), the `attacker`/`victim` two-identity setup, and `cases` — and **`access-spec.example.json`**, a minimal one wired to the bundled demo target (`vuln-target.py`). Copy either to a gitignored `*.local.json` and fill in real values.
+
 ### Choosing the seed URL
 
 For `ScannerMain` / `SiteScannerMain` the URL argument is simply the page (or crawl seed) to scan, including any query string you want probed (`...?id=1&q=x`).

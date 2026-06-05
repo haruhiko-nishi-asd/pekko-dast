@@ -1,0 +1,48 @@
+{
+  "_comment": "Full identity / IDOR / access-control spec TEMPLATE. Copy to a gitignored *.local.json, fill in REAL sessions/credentials for a host you are AUTHORIZED to test, and never commit secrets. One spec serves three scanners: AccessScannerMain runs the `cases` array; IdorScannerMain and SpaIdorScannerMain ignore `cases` and use the identities -- one named `attacker` (or the lone identity if there is exactly one) plus an optional `victim` -- to log in as both, harvest the victim's object ids, then try to read them while authenticated as the attacker. Each identity authenticates ONE of three ways: `login`, `cookie`, or `headers`. Placeholder hosts use the reserved `.example` TLD; replace everything in CAPS.",
+
+  "identities": {
+    "attacker": {
+      "_comment": "Auth option A -- login: the scanner drives this one real login form (deterministic field detection; the only auto-submit it performs). This is the identity the IDOR scanners act AS.",
+      "login": {
+        "loginUrl": "https://app.example/login",
+        "username": "attacker@example.com",
+        "password": "REPLACE_WITH_TEST_PASSWORD"
+      }
+    },
+    "victim": {
+      "_comment": "Auth option B -- cookie: a raw Cookie header value copied from your browser devtools after logging in as the victim. Most reliable (no MFA / field-detection issues) and keeps passwords out of the file. For the two-identity IDOR test the victim only needs to be reachable so the scanner can harvest the victim's object ids to try as the attacker.",
+      "cookie": "session=PASTE_VICTIM_SESSION_COOKIE_HERE"
+    },
+    "reader": {
+      "_comment": "Auth option C -- headers: token auth, e.g. a bearer JWT. Same effect as `cookie`. Only used if a case below references it; delete this identity if you do not need it.",
+      "headers": {
+        "Authorization": "Bearer PASTE_API_TOKEN_HERE"
+      }
+    }
+  },
+
+  "cases": [
+    {
+      "_comment": "IDOR / broken object-level auth: request a VICTIM-owned object AS the attacker. A finding when the response is 2xx and contains data that should be restricted. Put a victim-owned id in `url` and a victim-specific string in `mustContain`.",
+      "name": "attacker reads the victim's order",
+      "url": "https://app.example/api/orders?id=VICTIM_ORDER_ID",
+      "identity": "attacker",
+      "mustContain": "victim@example.com"
+    },
+    {
+      "_comment": "Same check via the token-auth identity, to show `headers` in use.",
+      "name": "reader reads the victim's order via API token",
+      "url": "https://app.example/api/orders?id=VICTIM_ORDER_ID",
+      "identity": "reader",
+      "mustContain": "victim@example.com"
+    },
+    {
+      "_comment": "Missing function-level auth: a privileged page requested with NO session. `identity: null` = unauthenticated. A finding if it returns 2xx containing `mustContain`.",
+      "name": "admin panel reachable without a session",
+      "url": "https://app.example/admin",
+      "identity": null,
+      "mustContain": "admin"
+    }
+  ]
+}
