@@ -449,6 +449,19 @@ sbt "runMain dast.scan.SpaIdorScannerMain https://target.example/ spec.json"
 
 `"findingCount": 0` の実行は失敗ではなく正当な結果です。IDOR スキャナにとっては、アプリが所有権を強制し、他アカウントのレコードが返らなかったことを意味します。
 
+### HTML レポート
+
+`DAST_REPORT_FILE` を設定すると、実行結果の自己完結型 HTML ビューも書き出します。検出結果に加えて、任意の証跡（`DAST_EVIDENCE_FILE`）を 1 ファイルにまとめ、ブラウザで開いたり共有したりできます。スキャンが既に生成した出力の読み取り専用レンダリングで、サーバは不要。変数が未設定なら無効です。
+
+```bash
+DAST_AUTHORIZED_HOSTS=… DAST_EVIDENCE_FILE=/tmp/ev.jsonl DAST_REPORT_FILE=/tmp/report.html \
+  sbt -batch "runMain dast.scan.SpaIdorScannerMain <url> <spec>"
+```
+
+![HTML レポートの例](docs/sample-report.png)
+
+<sub>プレースホルダのデータです。`target.example` / `victim-co.example` は予約済みのサンプル用ドメインで、実在の検出ではありません。</sub>
+
 ### 補足
 
 - **`ANTHROPIC_API_KEY` が無い?** 決定的チェック（ヘッダ・Cookie・ストレージ・オープンリダイレクト・SQLi・SSRF・仕様駆動アクセス制御）は動きます。LLM 主導ステップ（XSS 誘導、IDOR 立案）だけがスキップされます。

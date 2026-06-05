@@ -447,6 +447,19 @@ Each main prints a JSON report to stdout:
 
 A run with `"findingCount": 0` is a real result, not a failure: for the IDOR scanners it means the app enforced ownership and no cross-account record came back.
 
+### HTML report
+
+Set `DAST_REPORT_FILE` to also write a self-contained HTML view of the run — the same findings plus the opt-in evidence transcript (`DAST_EVIDENCE_FILE`), in one file you can open in a browser or hand off. It is a read-only render of output the scan already produced: no server, and off unless the variable is set.
+
+```bash
+DAST_AUTHORIZED_HOSTS=… DAST_EVIDENCE_FILE=/tmp/ev.jsonl DAST_REPORT_FILE=/tmp/report.html \
+  sbt -batch "runMain dast.scan.SpaIdorScannerMain <url> <spec>"
+```
+
+![Sample HTML report](docs/sample-report.png)
+
+<sub>Placeholder data — `target.example` / `victim-co.example` are reserved example domains, not a real finding.</sub>
+
 ### Notes
 
 - **No `ANTHROPIC_API_KEY`?** Deterministic checks (headers, cookies, storage, open redirect, SQLi, SSRF, spec-driven access control) still run; only the LLM-directed steps (XSS direction, IDOR planning) are skipped.
