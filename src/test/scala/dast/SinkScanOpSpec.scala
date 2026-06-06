@@ -25,7 +25,7 @@ class SinkScanOpSpec extends AnyWordSpec with Matchers {
       findings should have size 2
       findings.foreach { f =>
         f.kind shouldBe FindingKind.Xss
-        f.severity shouldBe Severity.High
+        f.severity shouldBe Severity.Medium
         f.reproducible shouldBe true
       }
       (findings.map(_.replay) should contain).allOf(

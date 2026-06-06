@@ -51,12 +51,16 @@ object SinkScanOp:
         .collect { case s if s != null => s.toString }.toSet
     case _ => Set.empty
 
-  /** Pure: a reproducible DOM-XSS finding per sink the marker reached. */
+  /** Pure: a reproducible DOM-XSS finding per sink the marker reached. The
+    * marker proves *source-to-sink reachability* (taint observation), not that a
+    * payload executed, so these stay [[Severity.Medium]] -- below the
+    * [[Severity.High]] that `ProbeOp` reserves for a payload that actually fired.
+    */
   def toFindings(source: InjectionPoint, sinks: Set[String]): Seq[Finding] =
     sinks.toSeq.sorted.map { sink =>
       Finding(
         kind = FindingKind.Xss,
-        severity = Severity.High,
+        severity = Severity.Medium,
         evidence = s"marker reached DOM sink '$sink' via ${source.describe}",
         reproducible = true,
         replay = s"domxss ${source.describe} sink=$sink",
