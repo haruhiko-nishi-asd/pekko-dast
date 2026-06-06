@@ -249,7 +249,7 @@ sequenceDiagram
     P->>T: navigate with the marker in the source (e.g. #<marker>)
     T-->>P: the page's own JS runs
     P->>P: a wrapped sink received the marker? record its name in __dastSinks
-    P-->>O: Xss (DOM, High) per sink the marker reached, else none
+    P-->>O: Xss (DOM, Medium) per sink the marker reached, else none
 ```
 
 ### アクセス制御 / IDOR（オペレータ仕様、要設定）

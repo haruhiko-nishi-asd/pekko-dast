@@ -2,7 +2,7 @@ English | [日本語](README.ja.md)
 
 # pekko-dast
 
-**New to this?** A web app can expose data or hand control to an attacker in ways that only show up while it's running — a page that follows a booby-trapped link, an API that returns another user's record, a cookie any script can read. This tool plays the part of a careful attacker against a site you own or are allowed to test: it drives a real browser, tries a bounded menu of probes (only ever against hosts you explicitly authorize), and reports only what it could actually confirm — each finding comes with the evidence and an exact way to reproduce it, never a bare guess. It's for developers and security engineers who want repeatable, proof-backed results. Unfamiliar acronym? The [glossary](#glossary) decodes every one used below.
+**New to this?** A web app can expose data or hand control to an attacker in ways that only show up while it's running - a page that follows a booby-trapped link, an API that returns another user's record, a cookie any script can read. This tool plays the part of a careful attacker against a site you own or are allowed to test: it drives a real browser, tries a bounded menu of probes (only ever against hosts you explicitly authorize), and reports only what it could actually confirm - each finding comes with the evidence and an exact way to reproduce it, never a bare guess. It's for developers and security engineers who want repeatable, proof-backed results. Unfamiliar acronym? The [glossary](#glossary) decodes every one used below.
 
 A browser-driven, LLM-directed **dynamic application security testing (DAST)** engine built on [Apache Pekko](https://pekko.apache.org/) and [Playwright](https://playwright.dev/java/). It scans one authorized URL (or crawls a seed and scans each in-scope URL), composing deterministic security checks with execution-confirmed active probes, and emits structured, reproducible findings.
 
@@ -35,24 +35,24 @@ It drives a real Chromium browser where one is needed (capture, XSS execution, a
 
 A quick decoder for the acronyms and security terms used throughout. Skip it if they're old friends.
 
-- **DAST** — *Dynamic Application Security Testing*: probing a **running** app from the outside, as a user or attacker would, rather than reading its source code.
-- **Deterministic** — same input always yields the same result, with no model in the loop. These are the findings you can fully trust.
-- **LLM** — *Large Language Model* (e.g. Claude). Here it only **proposes** next steps from a fixed menu; deterministic code does every actual confirmation, so a wrong guess can't become a false finding.
-- **XSS** — *Cross-Site Scripting*: getting the victim's browser to run attacker-supplied script. **Reflected** XSS arrives in the request (a crafted link); **DOM-based** XSS happens entirely inside the page's own JavaScript.
-- **SQLi** — *SQL Injection*: user input is concatenated into a database query and changes the query itself.
-- **SSRF** — *Server-Side Request Forgery*: tricking the **server** into making a request to a destination the attacker chooses (e.g. internal services or cloud metadata).
-- **SSTI** — *Server-Side Template Injection*: input is evaluated by the server's template engine instead of being treated as plain data.
-- **IDOR** — *Insecure Direct Object Reference*: change an id in a request (`?id=123` → `124`) and receive someone else's data. The common form of **broken access control**.
-- **LFI / path traversal** — *Local File Inclusion*: coaxing the app into reading files it shouldn't (e.g. `../../etc/passwd`).
-- **CORS** — *Cross-Origin Resource Sharing*: the browser's rules for which other origins may read a response; a misconfiguration can leak data across sites.
-- **JWT** — *JSON Web Token*: a signed token used for sessions; weak or missing signing lets one be forged.
-- **CSRF** — *Cross-Site Request Forgery*: a forged request that rides on a logged-in user's session.
-- **SPA** — *Single-Page Application*: a site whose UI is driven by JavaScript (React, Vue, …), often calling background APIs that no link points to.
-- **XHR / fetch** — the browser APIs a SPA uses to make those background API calls.
-- **CDP** — *Chrome DevTools Protocol*: the low-level channel used here to read cookie flags and storage.
-- **OAST** — *Out-of-band Application Security Testing*: confirming a "blind" bug by watching a listener you control receive a callback.
-- **Source / sink / taint** — a **source** is attacker-influenceable input; a **sink** is a dangerous function (like `innerHTML` or `eval`); **taint** tracking watches whether data flows from a source into a sink.
-- **Probe / gated / observe-only** — a **probe** is an active test that sends crafted input. Active probes are **gated**: they run only against hosts you authorize; everything else stays **observe-only** (just reading what a normal visit already exposes).
+- **DAST** - *Dynamic Application Security Testing*: probing a **running** app from the outside, as a user or attacker would, rather than reading its source code.
+- **Deterministic** - same input always yields the same result, with no model in the loop. These are the findings you can fully trust.
+- **LLM** - *Large Language Model* (e.g. Claude). Here it only **proposes** next steps from a fixed menu; deterministic code does every actual confirmation, so a wrong guess can't become a false finding.
+- **XSS** - *Cross-Site Scripting*: getting the victim's browser to run attacker-supplied script. **Reflected** XSS arrives in the request (a crafted link); **DOM-based** XSS happens entirely inside the page's own JavaScript.
+- **SQLi** - *SQL Injection*: user input is concatenated into a database query and changes the query itself.
+- **SSRF** - *Server-Side Request Forgery*: tricking the **server** into making a request to a destination the attacker chooses (e.g. internal services or cloud metadata).
+- **SSTI** - *Server-Side Template Injection*: input is evaluated by the server's template engine instead of being treated as plain data.
+- **IDOR** - *Insecure Direct Object Reference*: change an id in a request (`?id=123` → `124`) and receive someone else's data. The common form of **broken access control**.
+- **LFI / path traversal** - *Local File Inclusion*: coaxing the app into reading files it shouldn't (e.g. `../../etc/passwd`).
+- **CORS** - *Cross-Origin Resource Sharing*: the browser's rules for which other origins may read a response; a misconfiguration can leak data across sites.
+- **JWT** - *JSON Web Token*: a signed token used for sessions; weak or missing signing lets one be forged.
+- **CSRF** - *Cross-Site Request Forgery*: a forged request that rides on a logged-in user's session.
+- **SPA** - *Single-Page Application*: a site whose UI is driven by JavaScript (React, Vue, …), often calling background APIs that no link points to.
+- **XHR / fetch** - the browser APIs a SPA uses to make those background API calls.
+- **CDP** - *Chrome DevTools Protocol*: the low-level channel used here to read cookie flags and storage.
+- **OAST** - *Out-of-band Application Security Testing*: confirming a "blind" bug by watching a listener you control receive a callback.
+- **Source / sink / taint** - a **source** is attacker-influenceable input; a **sink** is a dangerous function (like `innerHTML` or `eval`); **taint** tracking watches whether data flows from a source into a sink.
+- **Probe / gated / observe-only** - a **probe** is an active test that sends crafted input. Active probes are **gated**: they run only against hosts you authorize; everything else stays **observe-only** (just reading what a normal visit already exposes).
 
 ---
 
@@ -247,7 +247,7 @@ sequenceDiagram
     P->>T: navigate with the marker in the source (e.g. #<marker>)
     T-->>P: the page's own JS runs
     P->>P: a wrapped sink received the marker? record its name in __dastSinks
-    P-->>O: Xss (DOM, High) per sink the marker reached, else none
+    P-->>O: Xss (DOM, Medium) per sink the marker reached, else none
 ```
 
 ### Access control / IDOR (operator spec, assisted)
@@ -273,26 +273,26 @@ sequenceDiagram
 
 ### IDOR (LLM-planned and LLM-navigated)
 
-**The attack.** Broken object-level authorization — IDOR — is the [#1 risk on the OWASP API Security Top 10](https://owasp.org/www-project-api-security/), and the single hardest vulnerability class to detect automatically. Unlike SQLi, XSS, or an open redirect, it has **no syntactic tell**: the vulnerable response is a clean `200 OK`, shaped exactly like a legitimate one, and only the *semantics* of ownership — *this record isn't the caller's* — distinguish it. A scanner cannot pattern-match its way there, which is why IDOR is the class still mostly found by hand. That is what makes deterministically confirming it the interesting problem here. It is the same broken-access-control class as the spec check above, but in the hard setting where that approach cannot reach: object ids are **non-guessable** (random ULIDs / UUIDs, so you cannot enumerate `123` to `124`), and the vulnerable endpoints are **not obvious** (a single-page app's XHR / fetch API that a link crawl never sees). To test it you need *real* ids belonging to a different user, and you need to reach the pages and API calls that carry them.
+**The attack.** Broken object-level authorization - IDOR - is the [#1 risk on the OWASP API Security Top 10](https://owasp.org/www-project-api-security/), and the single hardest vulnerability class to detect automatically. Unlike SQLi, XSS, or an open redirect, it has **no syntactic tell**: the vulnerable response is a clean `200 OK`, shaped exactly like a legitimate one, and only the *semantics* of ownership - *this record isn't the caller's* - distinguish it. A scanner cannot pattern-match its way there, which is why IDOR is the class still mostly found by hand. That is what makes deterministically confirming it the interesting problem here. It is the same broken-access-control class as the spec check above, but in the hard setting where that approach cannot reach: object ids are **non-guessable** (random ULIDs / UUIDs, so you cannot enumerate `123` to `124`), and the vulnerable endpoints are **not obvious** (a single-page app's XHR / fetch API that a link crawl never sees). To test it you need *real* ids belonging to a different user, and you need to reach the pages and API calls that carry them.
 
-**How the tool checks it.** This is the one place the model is genuinely load-bearing — but only to *reach and propose*; deterministic code *confirms*. Three stages:
+**How the tool checks it.** This is the one place the model is genuinely load-bearing - but only to *reach and propose*; deterministic code *confirms*. Three stages:
 
-**1 — Reach the objects.** From a login (the authenticated-scan carve-out), the scanner gets to object-bearing pages three ways:
+**1 - Reach the objects.** From a login (the authenticated-scan carve-out), the scanner gets to object-bearing pages three ways:
 
-- **`AuthCrawl`** — a deterministic same-host link crawl.
-- **`NavLoop`** — the model picks ONE indexed step per hop (follow a link, or submit a form) to reach listings a crawl misses. Every submission passes `ActionGuard`: GET always; POST only when the model flags it safe **and** a destructive-pattern deny-list passes (the model's verdict is necessary, never sufficient).
-- **`ClickLoop`** (SPA only) — the browser clicks button-gated UI a link/form crawl can't reach, or scrolls to load more rows. `ClickTargetScanOp` enumerates the visible controls (stamping each `data-dast-id`); the model picks one *by id*, never a selector. The loop is bounded three ways — a shared click budget, a cycle guard keyed on a control's identity (not its re-stamped id), and a dry counter that counts an in-page DOM reveal as progress. Each click is screened by `ClickGuard` and gated by `ConsentGate`.
+- **`AuthCrawl`** - a deterministic same-host link crawl.
+- **`NavLoop`** - the model picks ONE indexed step per hop (follow a link, or submit a form) to reach listings a crawl misses. Every submission passes `ActionGuard`: GET always; POST only when the model flags it safe **and** a destructive-pattern deny-list passes (the model's verdict is necessary, never sufficient).
+- **`ClickLoop`** (SPA only) - the browser clicks button-gated UI a link/form crawl can't reach, or scrolls to load more rows. `ClickTargetScanOp` enumerates the visible controls (stamping each `data-dast-id`); the model picks one *by id*, never a selector. The loop is bounded three ways - a shared click budget, a cycle guard keyed on a control's identity (not its re-stamped id), and a dry counter that counts an in-page DOM reveal as progress. Each click is screened by `ClickGuard` and gated by `ConsentGate`.
 
 Throughout, the browser records the XHR / fetch endpoints the app calls.
 
-**2 — Plan.** A planner (`IdorPlanner` / `ContentIdorPlanner`) proposes, **from ids it actually observed**, a parameter, the caller's own value, candidate ids (from a second account, in the two-identity flow), and the per-user discriminator field.
+**2 - Plan.** A planner (`IdorPlanner` / `ContentIdorPlanner`) proposes, **from ids it actually observed**, a parameter, the caller's own value, candidate ids (from a second account, in the two-identity flow), and the per-user discriminator field.
 
-**3 — Confirm (deterministic).** `IdorProbe` / `ContentIdorProbe` baselines the caller's own value, then requests each candidate **as the caller**. Two confirmation signals:
+**3 - Confirm (deterministic).** `IdorProbe` / `ContentIdorProbe` baselines the caller's own value, then requests each candidate **as the caller**. Two confirmation signals:
 
-- **JSON API** — the per-user **discriminator field** comes back present and **different** from the caller's own (someone else's record).
-- **HTML / SPA** (no clean field to diff) — a **leak marker**, the victim's *data fingerprint*. `ContentIdor.markersFrom` keeps short, distinctive data tokens (emails, brand domains) that appear on the *other* account's pages but **not** the caller's, so shared boilerplate (the app's brand, CDNs) drops out. A finding needs one to surface in a candidate's response **and** be absent from the caller's baseline — the victim's own data crossing the boundary.
+- **JSON API** - the per-user **discriminator field** comes back present and **different** from the caller's own (someone else's record).
+- **HTML / SPA** (no clean field to diff) - a **leak marker**, the victim's *data fingerprint*. `ContentIdor.markersFrom` keeps short, distinctive data tokens (emails, brand domains) that appear on the *other* account's pages but **not** the caller's, so shared boilerplate (the app's brand, CDNs) drops out. A finding needs one to surface in a candidate's response **and** be absent from the caller's baseline - the victim's own data crossing the boundary.
 
-A marker equal to an id in play is rejected (ids echo back regardless of any leak, proving nothing), so the verdict rests on *data*, never the key you queried with. The model cannot fabricate a finding (a secured endpoint yields no diff) and cannot fire a destructive action (the deny-list floor). Replay is the parameter, value, and field — no model needed.
+A marker equal to an id in play is rejected (ids echo back regardless of any leak, proving nothing), so the verdict rests on *data*, never the key you queried with. The model cannot fabricate a finding (a secured endpoint yields no diff) and cannot fire a destructive action (the deny-list floor). Replay is the parameter, value, and field - no model needed.
 
 ```mermaid
 sequenceDiagram
@@ -342,7 +342,7 @@ A note on weight: Pekko is heavier than scanning a handful of URLs strictly need
 ## What is validated, and what is not
 
 - **Validated live (against a consenting or local target):** insecure cookies, reflected XSS, open redirect, error-based SQLi, out-of-band SSRF, access control / IDOR, SSTI, path traversal / LFI, CORS misconfiguration, and JWT weak-secret, confirmed end to end against `scripts/vuln-target.py` (which exposes `/?q=` XSS, `/redirect?next=` open redirect, `/item?id=` SQLi, `/fetch?url=` SSRF, `/account?id=` IDOR, `/admin` missing auth, `/greet?name=` SSTI, `/download?file=` path traversal, `/api/data` CORS, and a weak-secret JWT cookie).
-- **Unit tested (pure logic):** every check's decision logic — including SSTI (evaluation vs reflection), path traversal (OS-file signatures), CORS (origin/credentials verdict), and JWT (`alg:none` + offline HMAC weak-secret cracking) — the decision parser, scope/frontier, the orchestration loop with stubbed effects, each LLM provider's request builder and response parser, and the click loop (its budget / cycle / dry guards with injected effects, the `ClickStep` parse/render boundary, and the `ClickGuard` destructive floor and `ClickOp` gate).
+- **Unit tested (pure logic):** every check's decision logic - including SSTI (evaluation vs reflection), path traversal (OS-file signatures), CORS (origin/credentials verdict), and JWT (`alg:none` + offline HMAC weak-secret cracking) - the decision parser, scope/frontier, the orchestration loop with stubbed effects, each LLM provider's request builder and response parser, and the click loop (its budget / cycle / dry guards with injected effects, the `ClickStep` parse/render boundary, and the `ClickGuard` destructive floor and `ClickOp` gate).
 - **Live-only (stated, not unit tested):** the browser-driving ops, the HTTP probers, the OAST listener, and the live model calls. Only the Anthropic client has run against a real endpoint; the OpenAI and Gemini clients are wired and parse-tested but not yet exercised live. The click ops on a live page (`navEnumerateClickables` / `navClick`) are run-only; clicking has been exercised live against a real authenticated SPA (it fired and revealed button-gated state), but **not** against the bundled `scripts/vuln-target.py`, which is server-rendered and has no JS-gated controls.
 - **Implemented and unit tested, not observed firing live:** time-based SQLi and the DOM sink-scan.
 
@@ -359,7 +359,7 @@ A note on weight: Pekko is heavier than scanning a handful of URLs strictly need
 
 ### Configure `.env`
 
-Copy the template and fill it in — `cp .env.example .env`. `DastConfig` reads `.env` as `KEY=VALUE` (resolution order: real env var, then `.env`, then JVM `-D` property), so no `export` is needed. `.env` is gitignored; keep secrets in it. `.env.example` lists every key with placeholders; the essentials:
+Copy the template and fill it in - `cp .env.example .env`. `DastConfig` reads `.env` as `KEY=VALUE` (resolution order: real env var, then `.env`, then JVM `-D` property), so no `export` is needed. `.env` is gitignored; keep secrets in it. `.env.example` lists every key with placeholders; the essentials:
 
 ```dotenv
 ANTHROPIC_API_KEY=sk-ant-...
@@ -431,7 +431,7 @@ How the two consumers use it:
 - **`AccessScannerMain`** runs the **`cases`** array. Each case requests `url` as `identity` (or unauthenticated when `identity` is `null`) and is a finding if the response is 2xx and its body contains `mustContain`. `cases` may be empty.
 - **`IdorScannerMain` / `SpaIdorScannerMain`** ignore `cases` and use the **identities** only: one named `attacker` (or the lone identity if there is exactly one) and an optional `victim`. With a `victim` it is a two-identity test: log in as both, harvest the victim's object ids, then try to read them while authenticated as the attacker.
 
-Two ready-to-copy specs ship in `scripts/`: **`idor-spec.example.json`** — an annotated template covering all three auth methods (`login` / `cookie` / `headers`), the `attacker`/`victim` two-identity setup, and `cases` — and **`access-spec.example.json`**, a minimal one wired to the bundled demo target (`vuln-target.py`). Copy either to a gitignored `*.local.json` and fill in real values.
+Two ready-to-copy specs ship in `scripts/`: **`idor-spec.example.json`** - an annotated template covering all three auth methods (`login` / `cookie` / `headers`), the `attacker`/`victim` two-identity setup, and `cases` - and **`access-spec.example.json`**, a minimal one wired to the bundled demo target (`vuln-target.py`). Copy either to a gitignored `*.local.json` and fill in real values.
 
 ### Choosing the seed URL
 
@@ -497,7 +497,7 @@ A run with `"findingCount": 0` is a real result, not a failure: for the IDOR sca
 
 ### HTML report
 
-Set `DAST_REPORT_FILE` to also write a self-contained HTML view of the run — the same findings plus the opt-in evidence transcript (`DAST_EVIDENCE_FILE`), in one file you can open in a browser or hand off. It is a read-only render of output the scan already produced: no server, and off unless the variable is set.
+Set `DAST_REPORT_FILE` to also write a self-contained HTML view of the run - the same findings plus the opt-in evidence transcript (`DAST_EVIDENCE_FILE`), in one file you can open in a browser or hand off. It is a read-only render of output the scan already produced: no server, and off unless the variable is set.
 
 ```bash
 DAST_AUTHORIZED_HOSTS=… DAST_EVIDENCE_FILE=/tmp/ev.jsonl DAST_REPORT_FILE=/tmp/report.html \
@@ -506,7 +506,7 @@ DAST_AUTHORIZED_HOSTS=… DAST_EVIDENCE_FILE=/tmp/ev.jsonl DAST_REPORT_FILE=/tmp
 
 ![Sample HTML report](docs/sample-report.png)
 
-<sub>Placeholder data — `target.example` / `victim-co.example` are reserved example domains, not a real finding.</sub>
+<sub>Placeholder data - `target.example` / `victim-co.example` are reserved example domains, not a real finding.</sub>
 
 ### Notes
 
