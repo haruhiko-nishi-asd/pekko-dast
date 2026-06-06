@@ -1,0 +1,19 @@
+[book]
+title = "Web Attacks, Explained"
+description = "A from-zero field guide to the web vulnerabilities pekko-dast detects. One chapter per attack, written to be understood by everyone, each with a hands-on lab against the bundled vulnerable target."
+authors = ["hanishi"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "html"
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/hanishi/pekko-dast"
+edit-url-template = "https://github.com/hanishi/pekko-dast/edit/main/book/{path}"
+
+[output.html.fold]
+enable = true
+level = 1
