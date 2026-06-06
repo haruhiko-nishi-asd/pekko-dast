@@ -2,9 +2,11 @@ English | [日本語](README.ja.md)
 
 # pekko-dast
 
+**New to this?** A web app can expose data or hand control to an attacker in ways that only show up while it's running — a page that follows a booby-trapped link, an API that returns another user's record, a cookie any script can read. This tool plays the part of a careful attacker against a site you own or are allowed to test: it drives a real browser, tries a bounded menu of probes (only ever against hosts you explicitly authorize), and reports only what it could actually confirm — each finding comes with the evidence and an exact way to reproduce it, never a bare guess. It's for developers and security engineers who want repeatable, proof-backed results. Unfamiliar acronym? The [glossary](#glossary) decodes every one used below.
+
 A browser-driven, LLM-directed **dynamic application security testing (DAST)** engine built on [Apache Pekko](https://pekko.apache.org/) and [Playwright](https://playwright.dev/java/). It scans one authorized URL (or crawls a seed and scans each in-scope URL), composing deterministic security checks with execution-confirmed active probes, and emits structured, reproducible findings.
 
-It drives a real Chromium browser where one is needed (capture, XSS execution, authenticated SPA navigation and login) and plain HTTP where it is not (open redirect, SQLi, SSRF, IDOR confirmation). Two stances hold throughout: it is **observe-only until you authorize a host** (active probing is gated by `ConsentGate` on `DAST_AUTHORIZED_HOSTS`), and **the model only proposes; deterministic code confirms** (the LLM fills a closed tool schema, never authors executed code, and no finding exists without a deterministic confirmation). To run it, jump to [Running a scan](#running-a-scan).
+It drives a real Chromium browser where one is needed (capture, XSS execution, authenticated single-page-app (SPA) navigation and login) and plain HTTP where it is not (open redirect, SQLi, SSRF, IDOR confirmation). Two stances hold throughout: it is **observe-only until you authorize a host** (active probing is gated by `ConsentGate` on `DAST_AUTHORIZED_HOSTS`), and **the model only proposes; deterministic code confirms** (the LLM fills a closed tool schema, never authors executed code, and no finding exists without a deterministic confirmation). To run it, jump to [Running a scan](#running-a-scan).
 
 ---
 
@@ -17,7 +19,7 @@ It drives a real Chromium browser where one is needed (capture, XSS execution, a
 | Missing security headers | `MissingSecurityHeader` | deterministic | response headers read | yes (capture) | no |
 | Open redirect | `OpenRedirect` | active, gated | no-follow request, `Location` targets a sentinel | no (HTTP) | no |
 | SQL injection | `SqlInjection` | active, gated | error signature vs baseline, or re-tested time delay | no (HTTP) | no |
-| SSTI | `Ssti` | active, gated | distinctive arithmetic evaluates server-side (not reflected) | no (HTTP) | no |
+| SSTI (server-side template injection) | `Ssti` | active, gated | distinctive arithmetic evaluates server-side (not reflected) | no (HTTP) | no |
 | Path traversal / LFI | `PathTraversal` | active, gated | a known OS-file signature comes back (absent from baseline) | no (HTTP) | no |
 | CORS misconfig | `Cors` | active, gated | a forged `Origin` is reflected (worst with credentials) | no (HTTP) | no |
 | JWT weakness | `JwtWeakness` | deterministic | `alg:none`, or a weak HMAC secret cracked offline | yes (capture) | no |
@@ -26,6 +28,31 @@ It drives a real Chromium browser where one is needed (capture, XSS execution, a
 | DOM XSS (sink reach) | `Xss` | active, gated | injected marker reaches a dangerous DOM sink | yes | no |
 | Access control / IDOR (spec) | `BrokenAccessControl` | active, gated, assisted | request as an identity returns restricted data | no (HTTP) | no |
 | IDOR (LLM-planned) | `BrokenAccessControl` | active, gated | a record that is not the caller's own comes back | login + nav + clicks | yes (plans, navigates, clicks) |
+
+---
+
+## Glossary
+
+A quick decoder for the acronyms and security terms used throughout. Skip it if they're old friends.
+
+- **DAST** — *Dynamic Application Security Testing*: probing a **running** app from the outside, as a user or attacker would, rather than reading its source code.
+- **Deterministic** — same input always yields the same result, with no model in the loop. These are the findings you can fully trust.
+- **LLM** — *Large Language Model* (e.g. Claude). Here it only **proposes** next steps from a fixed menu; deterministic code does every actual confirmation, so a wrong guess can't become a false finding.
+- **XSS** — *Cross-Site Scripting*: getting the victim's browser to run attacker-supplied script. **Reflected** XSS arrives in the request (a crafted link); **DOM-based** XSS happens entirely inside the page's own JavaScript.
+- **SQLi** — *SQL Injection*: user input is concatenated into a database query and changes the query itself.
+- **SSRF** — *Server-Side Request Forgery*: tricking the **server** into making a request to a destination the attacker chooses (e.g. internal services or cloud metadata).
+- **SSTI** — *Server-Side Template Injection*: input is evaluated by the server's template engine instead of being treated as plain data.
+- **IDOR** — *Insecure Direct Object Reference*: change an id in a request (`?id=123` → `124`) and receive someone else's data. The common form of **broken access control**.
+- **LFI / path traversal** — *Local File Inclusion*: coaxing the app into reading files it shouldn't (e.g. `../../etc/passwd`).
+- **CORS** — *Cross-Origin Resource Sharing*: the browser's rules for which other origins may read a response; a misconfiguration can leak data across sites.
+- **JWT** — *JSON Web Token*: a signed token used for sessions; weak or missing signing lets one be forged.
+- **CSRF** — *Cross-Site Request Forgery*: a forged request that rides on a logged-in user's session.
+- **SPA** — *Single-Page Application*: a site whose UI is driven by JavaScript (React, Vue, …), often calling background APIs that no link points to.
+- **XHR / fetch** — the browser APIs a SPA uses to make those background API calls.
+- **CDP** — *Chrome DevTools Protocol*: the low-level channel used here to read cookie flags and storage.
+- **OAST** — *Out-of-band Application Security Testing*: confirming a "blind" bug by watching a listener you control receive a callback.
+- **Source / sink / taint** — a **source** is attacker-influenceable input; a **sink** is a dangerous function (like `innerHTML` or `eval`); **taint** tracking watches whether data flows from a source into a sink.
+- **Probe / gated / observe-only** — a **probe** is an active test that sends crafted input. Active probes are **gated**: they run only against hosts you authorize; everything else stays **observe-only** (just reading what a normal visit already exposes).
 
 ---
 
