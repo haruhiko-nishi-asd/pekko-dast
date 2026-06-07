@@ -39,7 +39,28 @@ object ContentIdorProbe:
       system: ActorSystem[?],
       ec: ExecutionContext,
   ): Future[Vector[Finding]] = Future
-    .sequence(proposals.map(p => probe(p, cookie, auth, markers)))
+    .sequence(proposals.map(p =>
+      probe(p, cookie, auth, markers).map { result =>
+        result match
+          case Some(f) => log.info("IDOR CONFIRMED: {}", f.evidence)
+          case None => log.info(
+              "IDOR not confirmed: {} {} (own={}, candidates=[{}], field={})",
+              p.method,
+              p.urlTemplate,
+              p.ownValue,
+              p.candidates.mkString(", "),
+              p.discriminatorField,
+            )
+        EvidenceLog.decision(
+          "idor",
+          s"${p.method} ${p.urlTemplate}",
+          s"candidates=[${p.candidates.mkString(",")}] field=${p
+              .discriminatorField}",
+          result.isDefined,
+        )
+        result
+      },
+    ))
     .map(_.flatten.toVector)
 
   private def probe(
@@ -60,13 +81,21 @@ object ContentIdorProbe:
             // Drop any that is an id in play (ids echo, proving nothing).
             val leakMarkers = (ContentIdor.dataLeak(p).toSeq ++ markers)
               .distinct.filter(m => m != p.ownValue && !p.candidates.contains(m))
-            if leakMarkers.nonEmpty then
-              firstHitLeak(p, body, leakMarkers, cookie)
             // JSON field: the per-user field differing from this baseline.
-            else
-              IdorPlan.extractField(body, p.discriminatorField) match
-                case None => Future.successful(None)
-                case Some(own) => firstHit(p, own, cookie)
+            val fieldDiff: Future[Option[Finding]] = IdorPlan
+              .extractField(body, p.discriminatorField) match
+              case None => Future.successful(None)
+              case Some(own) => firstHit(p, own, cookie)
+            // Leak markers are best-effort and noisy (the model may name a
+            // non-distinctive token, e.g. a field NAME present in every
+            // response); a leak miss must NOT suppress the sound field-diff
+            // path, so fall through to it when no marker confirms.
+            if leakMarkers.nonEmpty then
+              firstHitLeak(p, body, leakMarkers, cookie).flatMap {
+                case found @ Some(_) => Future.successful(found)
+                case None => fieldDiff
+              }
+            else fieldDiff
           case _ => Future.successful(None)
         }
 

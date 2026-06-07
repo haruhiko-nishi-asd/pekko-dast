@@ -28,6 +28,27 @@ object ContentIdorPlanner:
   val MaxTokens = 1500
   private val MaxPages = 8
   private val MaxCharsPerPage = 12000
+  private val MaxRespEndpoints = 30
+
+  /** Per-endpoint top-level JSON field NAMES from captured response bodies, with
+    * the values dropped (the names-only channel to the model). Endpoints whose
+    * body is not parseable JSON, or carries no fields, are omitted. Pure.
+    */
+  def fieldsFromResponses(
+      responses: Seq[(String, String)],
+  ): Seq[(String, Seq[String])] = responses
+    .map((url, body) => url -> dast.IdorPlan.jsonFieldNames(body))
+    .filter(_._2.nonEmpty).distinctBy(_._1)
+
+  /** Render the response field NAMES per endpoint (never values), or "" when
+    * there are none, as a block to append after the observed requests. Pure.
+    */
+  def renderRespFields(fields: Seq[(String, Seq[String])]): String =
+    if fields.isEmpty then ""
+    else
+      val lines = fields.take(MaxRespEndpoints)
+        .map((url, fs) => s"$url: ${fs.distinct.mkString(", ")}").mkString("\n")
+      s"\n\nResponse fields (names only):\n$lines"
 
   private val SystemPrompt = "You are the IDOR planning step of a consented scan. You are shown the " +
     "authenticated pages a browser visited and the requests it made. Find the " +
@@ -98,15 +119,13 @@ object ContentIdorPlanner:
   def renderContext(
       pages: Seq[(String, String)],
       requests: Seq[String],
+      responseFields: Seq[(String, Seq[String])] = Seq.empty,
   ): String =
     val pageBlocks = pages.take(MaxPages)
       .map((url, html) => s"PAGE $url\n${html.take(MaxCharsPerPage)}")
       .mkString("\n\n")
-    s"""Observed requests:
-       |${requests.distinct.take(40).mkString("\n")}
-       |
-       |Authenticated pages:
-       |$pageBlocks""".stripMargin
+    s"Observed requests:\n${requests.distinct.take(40).mkString("\n")}" +
+      s"${renderRespFields(responseFields)}\n\nAuthenticated pages:\n$pageBlocks"
 
   /** Render two labelled sets -- each with its observed request URLs (where ids
     * reliably appear in query params) and page HTML. The other account's ids
@@ -117,32 +136,30 @@ object ContentIdorPlanner:
       ownRequests: Seq[String],
       otherPages: Seq[(String, String)],
       otherRequests: Seq[String],
+      ownResponseFields: Seq[(String, Seq[String])] = Seq.empty,
+      otherResponseFields: Seq[(String, Seq[String])] = Seq.empty,
   ): String =
     def pageBlock(ps: Seq[(String, String)]) = ps.take(MaxPages)
       .map((url, html) => s"PAGE $url\n${html.take(MaxCharsPerPage)}")
       .mkString("\n\n")
     def reqBlock(rs: Seq[String]) = rs.distinct.take(60).mkString("\n")
-    s"""=== YOUR account (attacker) ===
-       |Requests:
-       |${reqBlock(ownRequests)}
-       |Pages:
-       |${pageBlock(ownPages)}
-       |
-       |=== OTHER account (use THEIR ids as candidates) ===
-       |Requests:
-       |${reqBlock(otherRequests)}
-       |Pages:
-       |${pageBlock(otherPages)}""".stripMargin
+    s"=== YOUR account (attacker) ===\nRequests:\n${reqBlock(ownRequests)}" +
+      s"${renderRespFields(ownResponseFields)}\nPages:\n${pageBlock(ownPages)}" +
+      s"\n\n=== OTHER account (use THEIR ids as candidates) ===\nRequests:\n" +
+      s"${reqBlock(otherRequests)}${renderRespFields(otherResponseFields)}\n" +
+      s"Pages:\n${pageBlock(otherPages)}"
 
   /** Pull the tool input's `proposals` and validate, failing closed. */
   def inputToProposals(input: ujson.Value): Seq[Proposal] = input.objOpt
     .flatMap(_.get("proposals")).map(ContentIdor.parseProposals)
     .getOrElse(Seq.empty)
 
-  def plan(pages: Seq[(String, String)], requests: Seq[String])(using
-      ActorSystem[?],
-      ExecutionContext,
-  ): Future[Seq[Proposal]] = call(SystemPrompt, renderContext(pages, requests))
+  def plan(
+      pages: Seq[(String, String)],
+      requests: Seq[String],
+      responseFields: Seq[(String, Seq[String])] = Seq.empty,
+  )(using ActorSystem[?], ExecutionContext): Future[Seq[Proposal]] =
+    call(SystemPrompt, renderContext(pages, requests, responseFields))
 
   /** Two-identity plan: candidates come from the other account's ids. */
   def planCross(
@@ -150,9 +167,18 @@ object ContentIdorPlanner:
       ownRequests: Seq[String],
       otherPages: Seq[(String, String)],
       otherRequests: Seq[String],
+      ownResponseFields: Seq[(String, Seq[String])] = Seq.empty,
+      otherResponseFields: Seq[(String, Seq[String])] = Seq.empty,
   )(using ActorSystem[?], ExecutionContext): Future[Seq[Proposal]] = call(
     CrossPrompt,
-    renderCross(ownPages, ownRequests, otherPages, otherRequests),
+    renderCross(
+      ownPages,
+      ownRequests,
+      otherPages,
+      otherRequests,
+      ownResponseFields,
+      otherResponseFields,
+    ),
   )
 
   private def call(system: String, user: String)(using
