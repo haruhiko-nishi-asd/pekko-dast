@@ -2,8 +2,15 @@ English | [日本語](README.ja.md)
 
 # pekko-dast
 
-**New to this?** A web app can expose data or hand control to an attacker in ways that only show up while it's running: a page that follows a booby-trapped link, an API that returns another user's record, a cookie any script can read. This tool plays the part of a careful attacker against a site you own or are allowed to test. It drives a real browser, tries a bounded menu of probes (only ever against hosts you explicitly authorize), and reports only what it could actually confirm, with each finding backed by evidence and an exact way to reproduce it, never a bare guess. It's for developers and security engineers who want repeatable, proof-backed results. Unfamiliar acronym? The glossary decodes every one used below.
-Put precisely, that "careful attacker" is a browser-driven, LLM-directed dynamic application security testing (DAST) engine built on [Apache Pekko](https://pekko.apache.org/) and [Playwright](https://playwright.dev/java/). It scans one authorized URL, or crawls a seed and scans each in-scope URL, composing deterministic security checks with execution-confirmed active probes to emit structured, reproducible findings. It drives a real Chromium browser where one is needed (capture, XSS execution, authenticated single-page-app (SPA) navigation and login) and plain HTTP where it is not (open redirect, SQLi, SSRF, IDOR confirmation). Two stances hold throughout. It is **observe-only until you authorize a host** (active probing is gated by ConsentGate on DAST_AUTHORIZED_HOSTS), and **the model only proposes; deterministic code confirms**: the LLM fills a closed tool schema, never authors executed code, and no finding exists without a deterministic confirmation. To run it, jump to [Running a scan](#running-a-scan).
+**New to this?** 
+
+A web app can expose data or hand control to an attacker in ways that only show up while it's running: a page that follows a booby-trapped link, an API that returns another user's record, a cookie any script can read. This tool plays the part of a careful attacker against a site you own or are allowed to test. It drives a real browser, tries a bounded menu of probes (only ever against hosts you explicitly authorize), and reports only what it could actually confirm, with each finding backed by evidence and an exact way to reproduce it, never a bare guess. It's for developers and security engineers who want repeatable, proof-backed results. 
+
+Unfamiliar acronym? The glossary decodes every one used below.
+
+Put precisely, that "careful attacker" is a browser-driven, LLM-directed dynamic application security testing (DAST) engine built on [Apache Pekko](https://pekko.apache.org/) and [Playwright](https://playwright.dev/java/). It scans one authorized URL, or crawls a seed and scans each in-scope URL, composing deterministic security checks with execution-confirmed active probes to emit structured, reproducible findings. It drives a real Chromium browser where one is needed (capture, XSS execution, authenticated single-page-app (SPA) navigation and login) and plain HTTP where it is not (open redirect, SQLi, SSRF, IDOR confirmation). 
+
+Two stances hold throughout. It is **observe-only until you authorize a host** (active probing is gated by ConsentGate on DAST_AUTHORIZED_HOSTS), and **the model only proposes; deterministic code confirms**: the LLM fills a closed tool schema, never authors executed code, and no finding exists without a deterministic confirmation. To run it, jump to [Running a scan](#running-a-scan).
 
 ---
 
