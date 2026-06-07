@@ -104,6 +104,14 @@ final class BrowserResource(
   private var navPage: Page = null
   private val navReqs = java.util.Collections
     .synchronizedList(new java.util.ArrayList[String]())
+  // JSON XHR/fetch response bodies the SPA received, as (url, body). Values are
+  // held here only for deterministic, in-loop use (leak markers, id mining) and
+  // are NEVER sent to the model — only field *names* derived from them are.
+  // Bounded in count and per-body size so a chatty SPA cannot blow up memory.
+  private val navResps = java.util.Collections
+    .synchronizedList(new java.util.ArrayList[(String, String)]())
+  private val MaxNavResponses = 80
+  private val MaxNavBodyChars = 20000
 
   /** Open a fresh nav context+page (optionally seeded with cookies) and start
     * recording every request it makes (incl. JS XHR/fetch). Does NOT navigate
@@ -117,8 +125,23 @@ final class BrowserResource(
     )
     navPage = navCtx.newPage()
     navReqs.clear()
+    navResps.clear()
     navPage.onRequest { (req: Request) =>
       navReqs.add(req.url()); ()
+    }
+    // Capture JSON XHR/fetch response bodies so their field *names* can steer the
+    // model and their *values* feed deterministic leak/id checks in-loop. Best
+    // effort: header read is round-trip-free, the body read is guarded, and the
+    // count/size caps keep a polling SPA from flooding memory.
+    navPage.onResponse { (resp: Response) =>
+      try
+        val ct = Option(resp.headers().get("content-type")).getOrElse("")
+        if ct.toLowerCase.contains("json") && navResps.size < MaxNavResponses then
+          val body = resp.text()
+          if body != null && body.nonEmpty then
+            navResps.add(resp.url() -> body.take(MaxNavBodyChars))
+      catch { case _: Exception => () }
+      ()
     }
   }
 
@@ -349,6 +372,13 @@ final class BrowserResource(
 
   /** All requests the nav page has made so far (deduped). */
   def navRequests(): Seq[String] = navReqs.asScala.toList.distinct
+
+  /** JSON XHR/fetch response bodies captured during nav, as (url, body), first
+    * occurrence per url. Held only for deterministic, in-loop use (leak markers,
+    * id mining); never forwarded to the model (only derived field names are).
+    */
+  def navResponses(): Seq[(String, String)] =
+    navResps.asScala.toList.distinctBy(_._1)
 
   /** Close the nav page and its context. */
   def navStop(): Unit = {

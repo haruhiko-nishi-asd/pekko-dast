@@ -201,6 +201,9 @@ object Scanner:
         val victimSession = victim.map(_ => spawnNavSession(ctx, navTimeoutMs))
         def sameHost(reqs: Seq[String]) = reqs.map(UrlNormalizer.normalize)
           .filter(u => Scope.inScope(seedHost, u)).distinct
+        def sameHostResps(resps: Seq[(String, String)]) = resps
+          .filter((u, _) => Scope.inScope(seedHost, UrlNormalizer.normalize(u)))
+          .distinctBy(_._1)
         val victimDataF = (victim, victimSession) match
           case (Some(v), Some(vs)) => navigateAndCollect(
               vs,
@@ -211,10 +214,15 @@ object Scanner:
               maxHops,
               postBudget,
               maxClicks,
-            ).map((pages, _, rqs) => (pages, sameHost(rqs)))
-          case _ => Future
-              .successful((Vector.empty[(String, String)], Seq.empty[String]))
-        victimDataF.flatMap { (victimPages, victimRequests) =>
+            ).map((pages, _, rqs, rsp) =>
+              (pages, sameHost(rqs), sameHostResps(rsp)),
+            )
+          case _ => Future.successful((
+              Vector.empty[(String, String)],
+              Seq.empty[String],
+              Seq.empty[(String, String)],
+            ))
+        victimDataF.flatMap { (victimPages, victimRequests, victimResponses) =>
           navigateAndCollect(
             attackerSession,
             url,
@@ -224,30 +232,63 @@ object Scanner:
             maxHops,
             postBudget,
             maxClicks,
-          ).flatMap { (pages, cookie, requested) =>
+          ).flatMap { (pages, cookie, requested, responded) =>
             val reqs = sameHost(requested)
+            val resps = sameHostResps(responded)
+            // Names-only channel to the model: JSON field names per endpoint,
+            // never their values.
+            val ownFields = ContentIdorPlanner.fieldsFromResponses(resps)
+            val victimFields = ContentIdorPlanner
+              .fieldsFromResponses(victimResponses)
             log.info(
-              "SPA IDOR: attacker {} page(s)/{} req(s), victim {} page(s)/{} req(s)",
+              "SPA IDOR: attacker {} page(s)/{} req(s)/{} json resp(s), " +
+                "victim {} page(s)/{} req(s)/{} json resp(s)",
               pages.size,
               reqs.size,
+              resps.size,
               victimPages.size,
               victimRequests.size,
+              victimResponses.size,
             )
             val proposalsF =
               if victimPages.nonEmpty || victimRequests.nonEmpty then
-                ContentIdorPlanner
-                  .planCross(pages, reqs, victimPages, victimRequests)
-              else ContentIdorPlanner.plan(pages, reqs)
+                ContentIdorPlanner.planCross(
+                  pages,
+                  reqs,
+                  victimPages,
+                  victimRequests,
+                  ownFields,
+                  victimFields,
+                )
+              else ContentIdorPlanner.plan(pages, reqs, ownFields)
             // Model-free leak markers: distinctive tokens (emails, domains) in
             // the victim's content that aren't in the attacker's own. If one
             // appears in the attacker's response to a candidate id, it leaked --
             // sound, and recall no longer depends on the model naming the right
             // string.
+            // Values channel (model-free): fold the captured JSON response
+            // bodies into the content the markers are mined from, so distinctive
+            // data that only appears in an API response — not the rendered HTML —
+            // can still confirm a cross-account leak.
             val markers = dast.ContentIdor.markersFrom(
-              victimPages.map(_._2).mkString("\n"),
-              pages.map(_._2).mkString("\n"),
+              (victimPages.map(_._2) ++ victimResponses.map(_._2)).mkString("\n"),
+              (pages.map(_._2) ++ resps.map(_._2)).mkString("\n"),
             )
-            proposalsF.flatMap { proposals =>
+            proposalsF.flatMap { rawProposals =>
+              // Surfacing response field NAMES to the model occasionally nudges
+              // it to copy one (e.g. "email") into `leak`, which expects a
+              // distinctive data VALUE — a key appears in every response of that
+              // shape, so it can never confirm a leak and would only suppress
+              // the sound field-diff path. Drop any `leak` equal to a field name
+              // we surfaced; the field still serves as `discriminatorField`.
+              val surfacedFields =
+                (ownFields ++ victimFields).flatMap(_._2).map(_.toLowerCase)
+                  .toSet
+              val proposals = rawProposals.map(p =>
+                p.copy(leak =
+                  p.leak.filterNot(l => surfacedFields.contains(l.toLowerCase)),
+                ),
+              )
               log.info(
                 "Content-IDOR: {} proposal(s), {} leak marker(s)",
                 proposals.size,
@@ -255,11 +296,13 @@ object Scanner:
               )
               proposals.foreach(p =>
                 log.info(
-                  "  test: {} {} ({} candidate id(s), field={})",
+                  "  test: {} {} (own={}, candidates=[{}], field={}, leak={})",
                   p.method,
                   p.urlTemplate,
-                  p.candidates.size,
+                  p.ownValue,
+                  p.candidates.mkString(", "),
                   p.discriminatorField,
+                  p.leak.getOrElse("-"),
                 ),
               )
               ContentIdorProbe.run(proposals, cookie, auth, markers)
@@ -294,7 +337,12 @@ object Scanner:
   )(using
       ActorSystem[?],
       ExecutionContext,
-  ): Future[(Vector[(String, String)], Option[String], Seq[String])] =
+  ): Future[(
+      Vector[(String, String)],
+      Option[String],
+      Seq[String],
+      Seq[(String, String)],
+  )] =
     val seedHost = Scope.hostOf(url).getOrElse("")
     val log = org.slf4j.LoggerFactory.getLogger("dast.scan.Scanner")
     val loginAllowed = identity.login.exists(l =>
@@ -332,8 +380,11 @@ object Scanner:
         clickExploreAll(session, auth, navTimeoutMs, maxClicks, pages).flatMap {
           allPages =>
             sessionSubmit(session) { r =>
-              val reqs = r.navRequests(); r.navStop(); reqs
-            }.map(reqs => (allPages, cookie, reqs))
+              val reqs = r.navRequests()
+              val resps = r.navResponses()
+              r.navStop()
+              (reqs, resps)
+            }.map((reqs, resps) => (allPages, cookie, reqs, resps))
         }
       }
     }
