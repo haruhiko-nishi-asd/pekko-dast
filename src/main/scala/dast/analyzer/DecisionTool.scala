@@ -33,8 +33,10 @@ object DecisionTool:
       "action" -> ujson.Obj(
         "type" -> "object",
         "properties" -> ujson.Obj(
-          "type" -> enumSchema(Seq("reload", "back", "forward", "followLink")),
+          "type" ->
+            enumSchema(Seq("reload", "back", "forward", "followLink", "click")),
           "linkId" -> ujson.Obj("type" -> "string"),
+          "elementId" -> ujson.Obj("type" -> "integer"),
         ),
       ),
       "storageKey" -> ujson.Obj("type" -> "string"),

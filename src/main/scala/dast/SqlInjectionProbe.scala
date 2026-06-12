@@ -68,18 +68,26 @@ object SqlInjectionProbe:
       baselineBody: String,
       errResult: Option[(Long, String)],
   ): Option[Finding] = errResult.flatMap { case (_, body) =>
-    SqlInjectionCheck.detectError(body)
-      .filter(_ => SqlInjectionCheck.detectError(baselineBody).isEmpty)
+    SqlInjectionCheck.detectNewError(baselineBody, body)
       .map(db => SqlInjectionCheck.errorFinding(point, db))
   }
 
-  /** Time-based: first payload whose injected request is slow twice wins. */
+  /** Time-based: first payload that is slow under a differential re-test wins.
+    *
+    * The initial `baselineMs` is only a cheap pre-filter. A hit must then beat
+    * a BENIGN request re-measured at confirm time (not the stale baseline): a
+    * site that simply became slow overall makes the benign request slow too, so
+    * the injected-minus-benign delta stays below threshold and nothing is
+    * reported. Measuring benign and injected back to back also rules out a
+    * one-off spike.
+    */
   private def timeBased(
       target: String,
       point: InjectionPoint,
       original: String,
       baselineMs: Long,
   )(using ActorSystem[?], ExecutionContext): Future[Option[Finding]] =
+    val benignUrl = point.placeInto(target, original)
     SqlInjectionCheck.timePayloads(original)
       .foldLeft(Future.successful(Option.empty[Finding])) {
         case (acc, (label, value)) => acc.flatMap {
@@ -89,13 +97,14 @@ object SqlInjectionProbe:
               fetch(url).flatMap {
                 case Some((ms1, _))
                     if SqlInjectionCheck.confirmsTiming(baselineMs, ms1) =>
-                  // Re-test to rule out a one-off slow response.
-                  fetch(url).map {
-                    case Some((ms2, _))
-                        if SqlInjectionCheck.confirmsTiming(baselineMs, ms2) =>
+                  for
+                    benign <- fetch(benignUrl)
+                    injected <- fetch(url)
+                  yield (benign, injected) match
+                    case (Some((benignMs, _)), Some((ms2, _)))
+                        if SqlInjectionCheck.confirmsTiming(benignMs, ms2) =>
                       Some(SqlInjectionCheck.timeFinding(point, label))
                     case _ => None
-                  }
                 case _ => Future.successful(None)
               }
           }

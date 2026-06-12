@@ -38,5 +38,29 @@ class CorsCheckSpec extends AnyWordSpec with Matchers {
         None
       CorsCheck.analyze(origin, None, None) shouldBe None
     }
+
+    "match a reflected origin up to case and a trailing slash" in {
+      CorsCheck.analyze(origin, Some(origin.toUpperCase + "/"), Some("true"))
+        .map(_.severity) shouldBe Some(Severity.High)
+    }
+
+    "flag a host-derived origin that a suffix/prefix allow-list reflected" in {
+      // server did origin.startsWith("https://app.example") -> reflects attacker
+      val sneaky = "https://app.example.dast-cors-probe.example"
+      CorsCheck.analyze(sneaky, Some(sneaky), Some("true"))
+        .map(_.severity) shouldBe Some(Severity.High)
+    }
+  }
+
+  "CorsCheck.probeOrigins" should {
+    "include the bare sentinel plus host-prefixed and host-suffixed variants" in {
+      val os = CorsCheck.probeOrigins(Some("app.example"))
+      os should contain(CorsCheck.probeOrigin)
+      os should contain("https://app.example.dast-cors-probe.example")
+      os should contain("https://dast-cors-probe.example.app.example")
+    }
+    "be just the sentinel when the host is unknown" in {
+      CorsCheck.probeOrigins(None) shouldBe Seq(CorsCheck.probeOrigin)
+    }
   }
 }

@@ -34,6 +34,9 @@ class SecretInStorageCheckSpec extends AnyWordSpec with Matchers {
       "1234567890",
       "12345678901234567890",
       "the quick brown fox jumps over the lazy dog",
+      // Canonical UUID: a ubiquitous non-secret id that clears the entropy gate.
+      "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "F47AC10B-58CC-4372-A567-0E02B2C3D479",
     ).foreach { v =>
       withClue(s"value '$v': ")(SecretClassifier.classify(v) shouldBe None)
     }

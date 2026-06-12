@@ -48,6 +48,12 @@ class JwtCheckSpec extends AnyWordSpec with Matchers {
       fs.head.replay should include("alg=none")
     }
 
+    "not flag a contradictory alg:none token that carries a signature" in {
+      // alg=none but a non-empty signature segment is not the forgeable shape.
+      val token = s"${b64("""{"alg":"none"}""")}.${b64("""{"sub":"x"}""")}.AAAA"
+      JwtCheck.analyze("cookie 'session'", token) shouldBe empty
+    }
+
     "not flag a token signed with a strong secret" in {
       val token = hs256(
         """{"alg":"HS256"}""",

@@ -27,11 +27,23 @@ object CorsProbe:
       system: ActorSystem[?],
       ec: ExecutionContext,
   ): Future[Vector[Finding]] =
+    val targetHost = scala.util.Try(new java.net.URI(target).getHost).toOption
+      .flatMap(Option(_))
+    // One request per forged Origin (the bare sentinel plus host-derived ones
+    // that catch suffix/prefix allow-list bugs). Keep only the most severe
+    // finding so the variants do not produce duplicate CORS findings.
+    Future.sequence(CorsCheck.probeOrigins(targetHost).map(probe(target, _)))
+      .map(_.flatten.sortBy(severityRank).headOption.toVector)
+
+  private def probe(target: String, origin: String)(using
+      system: ActorSystem[?],
+      ec: ExecutionContext,
+  ): Future[Option[Finding]] =
     val request = HttpRequest(
       uri = target,
       headers = List(
         headers.RawHeader("User-Agent", UserAgent),
-        headers.RawHeader("Origin", CorsCheck.probeOrigin),
+        headers.RawHeader("Origin", origin),
       ),
     )
     ProbeHttp.send("cors", request).map { response =>
@@ -39,11 +51,23 @@ object CorsProbe:
       def header(name: String): Option[String] = response.headers
         .find(_.lowercaseName() == name.toLowerCase).map(_.value())
       CorsCheck.analyze(
-        CorsCheck.probeOrigin,
+        origin,
         header("access-control-allow-origin"),
         header("access-control-allow-credentials"),
-      ).toVector
+      )
     }.recover { case t =>
-      log.warn("CORS probe error for {}: {}", target, t.getMessage)
-      Vector.empty
+      log.warn(
+        "CORS probe error for {} (origin {}): {}",
+        target,
+        origin,
+        t.getMessage,
+      )
+      None
     }
+
+  private def severityRank(f: Finding): Int = f.severity match
+    case Severity.Critical => 0
+    case Severity.High => 1
+    case Severity.Medium => 2
+    case Severity.Low => 3
+    case Severity.Info => 4

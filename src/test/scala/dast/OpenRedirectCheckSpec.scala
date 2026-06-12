@@ -34,6 +34,13 @@ class OpenRedirectCheckSpec extends AnyWordSpec with Matchers {
     "not be fooled by the sentinel appearing in a path or query" in {
       OpenRedirectCheck.confirms(s"https://legit.test/?u=$host") shouldBe false
     }
+    "not be fooled by the sentinel as a sub-domain of an attacker host" in {
+      OpenRedirectCheck.confirms(s"//$host.attacker.test/") shouldBe false
+      OpenRedirectCheck.confirms(s"https://$host.attacker.test/") shouldBe false
+    }
+    "not be fooled by the sentinel placed in userinfo before the real host" in {
+      OpenRedirectCheck.confirms(s"//$host@attacker.test/") shouldBe false
+    }
   }
 
   "OpenRedirectCheck.toFinding" should {

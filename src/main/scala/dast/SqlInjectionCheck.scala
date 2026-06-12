@@ -44,23 +44,51 @@ object SqlInjectionCheck:
     "you have an error in your sql syntax" -> "MySQL",
     "warning: mysql" -> "MySQL",
     "mysql_fetch" -> "MySQL",
+    "valid mysql result" -> "MySQL",
     "unclosed quotation mark after the character string" -> "MSSQL",
     "incorrect syntax near" -> "MSSQL",
     "microsoft sql server" -> "MSSQL",
+    "[microsoft][odbc sql server driver]" -> "MSSQL",
     "syntax error at or near" -> "PostgreSQL",
     "pg_query" -> "PostgreSQL",
     "unterminated quoted string" -> "PostgreSQL",
+    "org.postgresql.util.psqlexception" -> "PostgreSQL",
+    "psycopg2." -> "PostgreSQL",
+    "pg::" -> "PostgreSQL",
     "quoted string not properly terminated" -> "Oracle",
     "ora-0" -> "Oracle",
     "sqlite3::" -> "SQLite",
     "sqlite error" -> "SQLite",
     "unrecognized token" -> "SQLite",
+    "java.sql.sqlexception" -> "JDBC",
+    "sqlstate[" -> "SQL",
   )
 
   /** The DB implicated by an error signature in `body`, if any. */
   def detectError(body: String): Option[String] =
     val b = body.toLowerCase
     errorSignatures.collectFirst { case (sig, db) if b.contains(sig) => db }
+
+  /** Signature substrings present in `body`. */
+  private def signaturesIn(body: String): Set[String] =
+    val b = body.toLowerCase
+    errorSignatures.collect { case (sig, _) if b.contains(sig) => sig }.toSet
+
+  /** The DB implicated by an error signature present in the injected response
+    * but ABSENT from the baseline. Comparing the SPECIFIC signature (not just
+    * "any error of the same engine") means a page that always shows one DB
+    * notice does not mask a DIFFERENT signature that the injected quote
+    * triggers — closing a false-negative the engine-level check left open.
+    */
+  def detectNewError(
+      baselineBody: String,
+      injectedBody: String,
+  ): Option[String] =
+    val baseSigs = signaturesIn(baselineBody)
+    val ib = injectedBody.toLowerCase
+    errorSignatures.collectFirst {
+      case (sig, db) if ib.contains(sig) && !baseSigs.contains(sig) => db
+    }
 
   /** Error-based payload: break the surrounding quoting with a single quote. */
   def errorPayload(original: String): String = original + "'"

@@ -64,21 +64,27 @@ object JwtCheck:
   /** Findings for one candidate token (empty if not a JWT / no weakness). */
   def analyze(source: String, token: String): Seq[Finding] = algOf(token) match
     case None => Seq.empty
-    case Some(alg) =>
+    case Some((alg, sig)) =>
+      // Only flag alg:none when the signature segment is actually EMPTY. A
+      // 'none' header paired with a present signature is contradictory and not
+      // the forgeable shape, so reporting it would be a false positive.
       val none =
-        if alg.equalsIgnoreCase("none") then Seq(noneFinding(source))
+        if alg.equalsIgnoreCase("none") && sig.isEmpty then
+          Seq(noneFinding(source))
         else Seq.empty
       val weak = weakSecretOf(token, alg).map(_ => weakSecretFinding(source, alg))
         .toSeq
       none ++ weak
 
-  /** The `alg` from a token's header, if it decodes to a JSON object with one
-    * (also the JWT-shape gate: non-tokens decode to nothing).
+  /** The `(alg, signature)` from a token's header, requiring the exact
+    * 3-segment JWT shape and a header that decodes to a JSON object naming an
+    * algorithm (the shape gate: non-tokens and malformed 2-segment values
+    * decode to none).
     */
-  private def algOf(token: String): Option[String] =
+  private def algOf(token: String): Option[(String, String)] =
     token.split("\\.", -1) match
-      case Array(h, _, _*) => b64json(h).flatMap(_.obj.get("alg"))
-          .flatMap(_.strOpt)
+      case Array(h, _, sig) => b64json(h).flatMap(_.obj.get("alg"))
+          .flatMap(_.strOpt).map(_ -> sig)
       case _ => None
 
   /** The first weak secret whose HMAC signature matches, if the alg is HMAC. */

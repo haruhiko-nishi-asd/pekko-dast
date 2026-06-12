@@ -31,16 +31,20 @@ object OpenRedirectCheck:
     .map(_.split("&").toSeq.filter(_.nonEmpty).map(_.split("=", 2)(0)).distinct)
     .getOrElse(Seq.empty)
 
-  /** True when a redirect `Location` points at the sentinel host: an absolute
-    * URL whose host is the sentinel, or a scheme-relative `//sentinel...`.
+  /** True when a redirect `Location` actually points at the sentinel HOST: an
+    * absolute URL, or a scheme-relative `//host/...`. Both are parsed for their
+    * host (giving `http:` a scheme-relative value), so a sentinel that only
+    * appears as a sub-domain (`//sentinel.attacker.test`), userinfo
+    * (`//sentinel@attacker.test`), path, or query does NOT confirm.
     */
   def confirms(location: String): Boolean =
     val loc = location.trim
-    val lower = loc.toLowerCase
-    val schemeRelative = lower.startsWith(s"//$SentinelHost")
-    val absolute = Try(new java.net.URI(loc).getHost).toOption.flatMap(Option(_))
-      .map(_.toLowerCase).contains(SentinelHost)
-    schemeRelative || absolute
+    def hostOf(u: String): Option[String] = Try(new java.net.URI(u).getHost)
+      .toOption.flatMap(Option(_)).map(_.toLowerCase)
+    val absolute = hostOf(loc).contains(SentinelHost)
+    val schemeRelative = loc.startsWith("//") && hostOf(s"http:$loc")
+      .contains(SentinelHost)
+    absolute || schemeRelative
 
   def toFinding(point: InjectionPoint, payload: String): Finding = Finding(
     kind = FindingKind.OpenRedirect,

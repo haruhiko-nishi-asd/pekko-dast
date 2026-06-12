@@ -50,6 +50,14 @@ class ContentIdorSpec extends AnyWordSpec with Matchers {
       ]""",
       )) shouldBe empty
     }
+    "cap candidates so a proposal cannot drive a high-volume scan" in {
+      val many = (1 to 100).map(i => s""""$i"""").mkString(",")
+      val arr = ujson.read(
+        s"""[{"urlTemplate":"https://h/x?id={id}","ownValue":"0","candidates":[$many],"discriminatorField":"f"}]""",
+      )
+      ContentIdor.parseProposals(arr).head.candidates should have size
+        ContentIdor.MaxCandidates
+    }
     "parse a leak-marker test without a discriminatorField" in {
       val arr = ujson.read(
         """[{

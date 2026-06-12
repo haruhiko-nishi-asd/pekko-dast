@@ -36,30 +36,35 @@ object SstiProbe:
       ExecutionContext,
   ): Future[Option[Finding]] =
     val point = InjectionPoint.QueryParam(name)
-    bodyOf(target).flatMap { baseline =>
-      SstiCheck.payloads
-        .foldLeft(Future.successful(Option.empty[Finding])) { (acc, payload) =>
-          acc.flatMap {
-            case some @ Some(_) => Future.successful(some)
-            case None => bodyOf(point.placeInto(target, payload)).map { body =>
-                if SstiCheck.confirms(baseline, body) then
-                  Some(SstiCheck.toFinding(point, payload))
-                else None
-              }
+    bodyOf(target).flatMap {
+      // A failed baseline fetch cannot serve as the "absent-from-baseline"
+      // reference: treating it as empty would make !baseline.contains(product)
+      // pass vacuously and risk a false positive. No baseline -> cannot judge.
+      case None => Future.successful(None)
+      case Some(baseline) => SstiCheck.payloads
+          .foldLeft(Future.successful(Option.empty[Finding])) { (acc, payload) =>
+            acc.flatMap {
+              case some @ Some(_) => Future.successful(some)
+              case None => bodyOf(point.placeInto(target, payload)).map {
+                  case Some(body) if SstiCheck.confirms(baseline, body) =>
+                    Some(SstiCheck.toFinding(point, payload))
+                  case _ => None
+                }
+            }
           }
-        }
     }
 
   private def bodyOf(url: String)(using
       system: ActorSystem[?],
       ec: ExecutionContext,
-  ): Future[String] = ProbeHttp.send(
+  ): Future[Option[String]] = ProbeHttp.send(
     "ssti",
     HttpRequest(
       uri = url,
       headers = List(headers.RawHeader("User-Agent", UserAgent)),
     ),
-  ).flatMap(r => Unmarshal(r.entity).to[String]).recover { case t =>
-    log.warn("SSTI probe error for {}: {}", url, t.getMessage)
-    ""
-  }
+  ).flatMap(r => Unmarshal(r.entity).to[String]).map(Option(_))
+    .recover { case t =>
+      log.warn("SSTI probe error for {}: {}", url, t.getMessage)
+      None
+    }

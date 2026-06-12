@@ -84,7 +84,39 @@ class IdorPlanSpec extends AnyWordSpec with Matchers {
     }
   }
 
+  "IdorPlan.stableField" should {
+    "hold when the discriminator value is identical across two responses" in {
+      IdorPlan.stableField(
+        """{"email":"bob@x"}""",
+        """{"email":"bob@x"}""",
+        "email",
+      ) shouldBe true
+    }
+    "reject a volatile per-request field that changes between fetches" in {
+      IdorPlan.stableField(
+        """{"requestId":"abc-1"}""",
+        """{"requestId":"abc-2"}""",
+        "requestId",
+      ) shouldBe false
+    }
+    "reject when the field is absent in either response" in {
+      IdorPlan
+        .stableField("""{"email":"a@x"}""", """{"id":1}""", "email") shouldBe
+        false
+    }
+  }
+
   "IdorPlan.parseProposals" should {
+
+    "cap candidates so an over-enumerating model cannot drive a high-volume scan" in {
+      val many = (1 to 100).map(i => s""""$i"""").mkString(",")
+      val arr = ujson.read(
+        s"""[{"param":"id","ownValue":"0","candidates":[$many],"discriminatorField":"email"}]""",
+      )
+      IdorPlan.parseProposals(arr).head.candidates should have size
+        IdorPlan.MaxCandidates
+    }
+
     "validate proposals and drop incomplete ones" in {
       val arr = ujson.read(
         """[

@@ -33,6 +33,13 @@ object SecretClassifier:
 
   private val tokenCharset = "^[A-Za-z0-9_\\-+/=]+$".r
 
+  /** Canonical UUID (8-4-4-4-12 hex). Ubiquitous as a non-secret identifier
+    * (request ids, entity keys), yet long and mixed enough to clear the entropy
+    * gate — so it is excluded explicitly to avoid false positives.
+    */
+  private val uuid =
+    "(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$".r
+
   def classify(raw: String): Option[Hit] =
     val v = raw.trim
     if looksLikeJwt(v) then Some(Hit(Kind.Jwt, "JWT structure"))
@@ -64,8 +71,8 @@ object SecretClassifier:
     * ids.
     */
   def isHighEntropyToken(v: String, entropy: Double): Boolean =
-    v.length >= 20 && tokenCharset.matches(v) && v.exists(_.isLetter) &&
-      v.exists(_.isDigit) && entropy >= 3.5
+    v.length >= 20 && tokenCharset.matches(v) && uuid.findFirstIn(v).isEmpty &&
+      v.exists(_.isLetter) && v.exists(_.isDigit) && entropy >= 3.5
 
   /** Shannon entropy in bits per character. */
   def shannonEntropy(s: String): Double =

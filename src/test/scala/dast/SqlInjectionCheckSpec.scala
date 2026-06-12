@@ -21,6 +21,35 @@ class SqlInjectionCheckSpec extends AnyWordSpec with Matchers {
     "return None for an ordinary page" in {
       SqlInjectionCheck.detectError("<html>Item: 42</html>") shouldBe None
     }
+    "recognise broadened signatures (JDBC, psycopg2, ODBC)" in {
+      SqlInjectionCheck
+        .detectError("java.sql.SQLException: bad grammar") shouldBe Some("JDBC")
+      SqlInjectionCheck.detectError("psycopg2.errors.SyntaxError")
+        .map(_ => "pg") shouldBe Some("pg")
+      SqlInjectionCheck
+        .detectError("[Microsoft][ODBC SQL Server Driver]") shouldBe
+        Some("MSSQL")
+    }
+  }
+
+  "SqlInjectionCheck.detectNewError" should {
+    "confirm a signature present in the injected body but absent from baseline" in {
+      SqlInjectionCheck.detectNewError(
+        baselineBody = "<html>welcome</html>",
+        injectedBody = "You have an error in your SQL syntax near ''",
+      ) shouldBe Some("MySQL")
+    }
+    "confirm a DIFFERENT signature even when the baseline already shows one" in {
+      // baseline always renders a generic notice; the quote triggers a new one.
+      SqlInjectionCheck.detectNewError(
+        baselineBody = "Warning: mysql connection notice",
+        injectedBody = "Warning: mysql connection notice\nYou have an error in your SQL syntax",
+      ) shouldBe Some("MySQL")
+    }
+    "not confirm when the same signature was already in the baseline" in {
+      val body = "You have an error in your SQL syntax near ''"
+      SqlInjectionCheck.detectNewError(body, body) shouldBe None
+    }
   }
 
   "SqlInjectionCheck.errorPayload" should {

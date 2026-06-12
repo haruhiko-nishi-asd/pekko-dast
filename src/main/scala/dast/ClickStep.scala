@@ -60,6 +60,14 @@ object ClickStep:
        |or done. Never choose a control that creates, updates, deletes, pays, or
        |logs out. Choose done when nothing new remains.""".stripMargin
 
+  // A whole, finite, in-range number (or numeric string). A fractional or
+  // out-of-range value is off-menu and rejected, not truncated/saturated into a
+  // valid-looking id.
   private def intField(v: ujson.Value, name: String): Option[Int] = v.objOpt
-    .flatMap(_.get(name))
-    .flatMap(x => x.numOpt.map(_.toInt).orElse(x.strOpt.flatMap(_.toIntOption)))
+    .flatMap(_.get(name)).flatMap(x =>
+      x.numOpt.collect {
+        case d
+            if d == Math.floor(d) && !d.isInfinite && d.abs <= Int.MaxValue =>
+          d.toInt
+      }.orElse(x.strOpt.flatMap(s => s.trim.toIntOption)),
+    )

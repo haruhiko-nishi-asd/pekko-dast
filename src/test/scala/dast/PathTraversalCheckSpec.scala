@@ -22,6 +22,17 @@ class PathTraversalCheckSpec extends AnyWordSpec with Matchers {
     "return None for an ordinary page" in {
       PathTraversalCheck.detect("<html>hello world</html>") shouldBe None
     }
+
+    "not be fooled by a single quoted root line in prose (docs/blogs)" in {
+      PathTraversalCheck
+        .detect("<p>An example entry looks like root:x:0:0:root.</p>") shouldBe
+        None
+    }
+
+    "not be fooled by a lone [extensions] section in a changelog" in {
+      PathTraversalCheck.detect("Changelog\n[Extensions] added foo") shouldBe
+        None
+    }
   }
 
   "PathTraversalCheck.confirms" should {
@@ -29,12 +40,12 @@ class PathTraversalCheckSpec extends AnyWordSpec with Matchers {
     "confirm a file signature that was absent from the baseline" in {
       PathTraversalCheck.confirms(
         baselineBody = "<html>file not found</html>",
-        injectedBody = "root:x:0:0:root:/root:/bin/bash",
+        injectedBody = "root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/",
       ) shouldBe Some("/etc/passwd")
     }
 
     "reject when the baseline already contained the signature" in {
-      val body = "root:x:0:0:demo"
+      val body = "root:x:0:0:root:/root:/bin/bash\ndaemon:x:1:1:daemon:/"
       PathTraversalCheck.confirms(body, body) shouldBe None
     }
   }

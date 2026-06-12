@@ -84,7 +84,9 @@ object IdorProbe:
     .foldLeft(Future.successful(Option.empty[Finding])) { (acc, candidate) =>
       acc.flatMap {
         case some @ Some(_) => Future.successful(some)
-        case None => fetch(point.placeInto(url, candidate), cookie).map {
+        case None =>
+          val candUrl = point.placeInto(url, candidate)
+          fetch(candUrl, cookie).flatMap {
             case Some((cs, cbody))
                 if IdorPlan.confirms(
                   ownValue,
@@ -93,16 +95,24 @@ object IdorProbe:
                   cbody,
                   p.discriminatorField,
                 ) =>
-              val leaked = IdorPlan.extractField(cbody, p.discriminatorField)
-                .getOrElse("")
-              Some(IdorPlan.toFinding(
-                url,
-                p.param,
-                candidate,
-                p.discriminatorField,
-                leaked,
-              ))
-            case _ => None
+              // Re-fetch and require the discriminator value to be stable, so a
+              // volatile per-request field cannot false-confirm.
+              fetch(candUrl, cookie).map {
+                case Some((_, cbody2))
+                    if IdorPlan
+                      .stableField(cbody, cbody2, p.discriminatorField) =>
+                  val leaked = IdorPlan.extractField(cbody, p.discriminatorField)
+                    .getOrElse("")
+                  Some(IdorPlan.toFinding(
+                    url,
+                    p.param,
+                    candidate,
+                    p.discriminatorField,
+                    leaked,
+                  ))
+                case _ => None
+              }
+            case _ => Future.successful(None)
           }
       }
     }

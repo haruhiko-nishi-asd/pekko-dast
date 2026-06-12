@@ -21,6 +21,11 @@ import scala.util.Try
   */
 object IdorPlan:
 
+  /** Most candidate ids tried per proposal — bounds the request volume a single
+    * (possibly over-enumerating or prompt-injected) proposal can generate.
+    */
+  val MaxCandidates = 25
+
   /** One model-proposed IDOR test (parameters only, validated here). */
   final case class Proposal(
       param: String,
@@ -98,6 +103,17 @@ object IdorPlan:
     extractField(candidateBody, field)
       .exists(v => v.nonEmpty && v != ownFieldValue && v != injectedValue)
 
+  /** The discriminator field is STABLE across two responses to the same
+    * candidate id. A genuine cross-user record returns the same value twice; a
+    * per-request volatile field (timestamp, request-id, server nonce) changes
+    * between fetches. Requiring equality rejects those volatile fields, which
+    * would otherwise false-confirm against the caller's own baseline merely by
+    * differing. The field must be present in both responses.
+    */
+  def stableField(bodyA: String, bodyB: String, field: String): Boolean =
+    val a = extractField(bodyA, field)
+    a.exists(_.nonEmpty) && a == extractField(bodyB, field)
+
   /** Parse the tool's `proposals` array into validated proposals (drops any
     * missing a required field or with no candidates).
     */
@@ -109,7 +125,8 @@ object IdorPlan:
         field <- p.obj.get("discriminatorField").flatMap(_.strOpt)
           .filter(_.nonEmpty)
         cands = p.obj.get("candidates").flatMap(_.arrOpt).getOrElse(Nil)
-          .flatMap(strOrNum).filter(_.nonEmpty) if cands.nonEmpty
+          .flatMap(strOrNum).filter(_.nonEmpty).distinct.take(MaxCandidates)
+        if cands.nonEmpty
       yield Proposal(param, own, cands.toSeq, field)
     }.toSeq
 

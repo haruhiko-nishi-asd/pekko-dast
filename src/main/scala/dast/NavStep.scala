@@ -61,9 +61,17 @@ object NavStep:
        |done. Aim to reach pages that LIST objects so an IDOR check can run.
        |Choose done when nothing new remains.""".stripMargin
 
+  // A whole, finite, in-range number (or numeric string). A fractional or
+  // out-of-range value is off-menu and rejected, not truncated/saturated into a
+  // valid-looking index.
   private def intField(v: ujson.Value, name: String): Option[Int] = v.objOpt
-    .flatMap(_.get(name))
-    .flatMap(x => x.numOpt.map(_.toInt).orElse(x.strOpt.flatMap(_.toIntOption)))
+    .flatMap(_.get(name)).flatMap(x =>
+      x.numOpt.collect {
+        case d
+            if d == Math.floor(d) && !d.isInfinite && d.abs <= Int.MaxValue =>
+          d.toInt
+      }.orElse(x.strOpt.flatMap(s => s.trim.toIntOption)),
+    )
 
   private def strOrNum(v: ujson.Value): Option[String] = v.strOpt.orElse(
     v.numOpt.map(n => if n.isWhole then n.toLong.toString else n.toString),

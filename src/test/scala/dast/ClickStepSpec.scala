@@ -37,6 +37,16 @@ class ClickStepSpec extends AnyWordSpec with Matchers {
         ClickStep.Done
       ClickStep.parse(ujson.read("""["click"]""")) shouldBe ClickStep.Done
     }
+
+    "reject a fractional or out-of-range elementId rather than truncating it" in {
+      // 2.9 must not become Click(2); 1e30 must not saturate to Int.MaxValue.
+      ClickStep
+        .parse(ujson.read("""{"action":"click","elementId":2.9}""")) shouldBe
+        ClickStep.Done
+      ClickStep
+        .parse(ujson.read("""{"action":"click","elementId":1e30}""")) shouldBe
+        ClickStep.Done
+    }
   }
 
   "ClickStep.render" should {

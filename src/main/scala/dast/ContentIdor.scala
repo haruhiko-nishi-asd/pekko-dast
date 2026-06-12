@@ -16,6 +16,13 @@ package dast
   */
 object ContentIdor:
 
+  /** Most candidate ids tried per proposal. The model proposes candidates and
+    * the probe sends one request each; this bound stops an over-enumerating (or
+    * prompt-injected) model from turning a confirmation into a high-volume scan
+    * against the authorized host (the throttle caps concurrency, not total).
+    */
+  val MaxCandidates = 25
+
   /** A model-proposed IDOR test. `urlTemplate` (and optional `bodyTemplate` for
     * a POST) contain `{id}`, substituted with `ownValue` (baseline) then each
     * candidate. The model supplies only these parameters, never code.
@@ -111,7 +118,7 @@ object ContentIdor:
         method = p.obj.get("method").flatMap(_.strOpt).getOrElse("GET")
         body = p.obj.get("bodyTemplate").flatMap(_.strOpt).filter(_.nonEmpty)
         cands = p.obj.get("candidates").flatMap(_.arrOpt).getOrElse(Nil)
-          .flatMap(strOrNum).filter(_.nonEmpty).distinct
+          .flatMap(strOrNum).filter(_.nonEmpty).distinct.take(MaxCandidates)
         // Need a confirmation signal: a JSON field to diff, OR a leak marker.
         if cands.nonEmpty && (field.nonEmpty || leak.isDefined) &&
           (urlT.contains("{id}") || body.exists(_.contains("{id}")))
