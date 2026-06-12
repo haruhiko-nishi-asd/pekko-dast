@@ -252,7 +252,14 @@ object Scanner:
             )
             val proposalsF =
               if victimPages.nonEmpty || victimRequests.nonEmpty then
-                ContentIdorPlanner.planCross(
+                // Two complementary planners, unioned. planCross drives the
+                // leak-marker path on the victim's DISTINCT data; the single-
+                // identity plan adds field-diff candidates from the attacker's
+                // OWN observed neighbour ids — which planCross excludes by
+                // design ("not ids from your own pages"), so a neighbour id the
+                // attacker can already see (a listing row, a "next" link) would
+                // otherwise be missed even though reading it is a real IDOR.
+                val crossF = ContentIdorPlanner.planCross(
                   pages,
                   reqs,
                   victimPages,
@@ -260,6 +267,8 @@ object Scanner:
                   ownFields,
                   victimFields,
                 )
+                val ownF = ContentIdorPlanner.plan(pages, reqs, ownFields)
+                crossF.zip(ownF).map((c, o) => (c ++ o).distinct)
               else ContentIdorPlanner.plan(pages, reqs, ownFields)
             // Model-free leak markers: distinctive tokens (emails, domains) in
             // the victim's content that aren't in the attacker's own. If one
