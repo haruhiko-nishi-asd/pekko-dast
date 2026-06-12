@@ -287,7 +287,7 @@ sequenceDiagram
 
 全体を通して、ブラウザはアプリが呼ぶ XHR / fetch エンドポイントを記録します。
 
-**2 — 立案する。** プランナ（`IdorPlanner` / `ContentIdorPlanner`）が、**実際に観測した id から**、パラメータ・呼び出し元自身の値・候補 id（2 識別情報フローでは別アカウント由来）・ユーザーごとの判別フィールドを提案します。
+**2 — 立案する。** プランナ（`IdorPlanner` / `ContentIdorPlanner`）が、**実際に観測した id から**、パラメータ・呼び出し元自身の値・候補 id・ユーザーごとの判別フィールドを提案します。候補 id は呼び出し元自身が観測した隣接 id（一覧の行、`next` リンクなど）です。2 識別情報フローでは *両方* のプランナを実行して統合し、リークマーカー経路用に別アカウント由来の id も追加で取り込みます。そのため、呼び出し元自身のページに既に現れている隣接 id も、相手アカウントが提示しなかったという理由で取りこぼすことはありません。
 
 **3 — 確認する（決定的）。** `IdorProbe` / `ContentIdorProbe` が呼び出し元自身の値でベースラインを取り、各候補を **呼び出し元として** 要求します。確認の手がかりは 2 つです。
 
@@ -388,6 +388,7 @@ DAST_AUTHORIZED_HOSTS=target.example   # 空 = 観測のみ（能動的プロー
 | `DAST_MAX_CLICKS` | `8` | SpaIdor | ボタン依存の探索でページ間に共有するクリック予算（`0` でクリック無効）。 |
 | `DAST_EVIDENCE_FILE` | （未設定→無効） | すべての main | JSON Lines の証跡を書き出すパス。対象への各 HTTP リクエスト（注入ペイロード・応答ステータス/ヘッダ/所要時間）と各 XSS の判定を記録し、スキャンの実施を証明・再現可能にします。未設定なら無効。 |
 | `DAST_REPORT_FILE` | （未設定→無効） | すべての main | 自己完結型の HTML レポートを書き出すパス。検出結果（深刻度・根拠・replay ハンドル）に加えて上記の証跡を 1 ファイルにまとめ、ブラウザで開いたり共有したりできます。スキャンが既に生成した出力の読み取り専用ビューで、サーバは不要。未設定なら無効。 |
+| `DAST_REMEDIATION_FILE` | （未設定→無効） | すべての main | Markdown の修正ブリーフを書き出すパス。確認済みの各検出結果を、コーディングエージェント向けのタスク（CWE/OWASP、根本原因、コード上の探し方、修正方法、検証条件）として書き直し、同じ根拠と replay ハンドルを添えます。未設定なら無効。 |
 | `DAST_TRACE_DIR` | （未設定→無効） | ブラウザを駆動する main | 認証付きブラウザセッションのセッション別 **Playwright トレース**（操作ごとのスクリーンショット・DOM スナップショット・ネットワーク）を書き出すディレクトリ。`npx playwright show-trace <zip>` または [trace.playwright.dev](https://trace.playwright.dev) で開けます。スキャンが本当に Chromium を駆動した証拠であり、浅いクロールのデバッグにも有用。未設定なら無効。 |
 | `DAST_VIDEO_DIR` | （未設定→無効） | ブラウザを駆動する main | 各ナビセッションの `.webm` **動画** を書き出すディレクトリ。ツール不要でどのブラウザでも再生でき、デモ用クリップに便利（デバッグにはトレースの方が詳細）。未設定なら無効。 |
 | `DAST_MAX_CONCURRENCY` | `4` | グローバル HTTP スロットル | 対象への同時リクエスト上限（バックプレッシャ）。 |
@@ -509,6 +510,15 @@ DAST_AUTHORIZED_HOSTS=… DAST_EVIDENCE_FILE=/tmp/ev.jsonl DAST_REPORT_FILE=/tmp
 ![HTML レポートの例](docs/sample-report.png)
 
 <sub>プレースホルダのデータです。`target.example` / `victim-co.example` は予約済みのサンプル用ドメインで、実在の検出ではありません。</sub>
+
+### 修正ブリーフ
+
+`DAST_REMEDIATION_FILE` を設定すると、Markdown の **修正ブリーフ** も書き出します。確認済みの各検出結果を、対象のソースコードを持つコーディングエージェント向けのタスクとして書き直します。DAST はソースを見られないため、ブリーフはファイルパスを示しません。脆弱性クラスをライブの根拠とモデル非依存の replay ハンドルに結びつけ、そこへ CWE/OWASP の対応、根本原因、コード上の探し方、修正方法、検証条件（プローブを再実行しても確認されなくなること）を添えます。スキャンが既に確認した検出結果の読み取り専用レンダリングで、変数が未設定なら無効です。
+
+```bash
+DAST_AUTHORIZED_HOSTS=… DAST_REMEDIATION_FILE=/tmp/remediation.md \
+  sbt -batch "runMain dast.scan.SpaIdorScannerMain <url> <spec>"
+```
 
 ### 補足
 

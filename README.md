@@ -289,7 +289,7 @@ sequenceDiagram
 
 Throughout, the browser records the XHR / fetch endpoints the app calls.
 
-**2 - Plan.** A planner (`IdorPlanner` / `ContentIdorPlanner`) proposes, **from ids it actually observed**, a parameter, the caller's own value, candidate ids (from a second account, in the two-identity flow), and the per-user discriminator field.
+**2 - Plan.** A planner (`IdorPlanner` / `ContentIdorPlanner`) proposes, **from ids it actually observed**, a parameter, the caller's own value, candidate ids, and the per-user discriminator field. Candidates are the caller's own observed neighbour ids (a listing row, a `next` link); the two-identity flow runs *both* planners and unions them, additionally drawing ids from a second account for the leak-marker path - so a neighbour id already visible on the caller's own pages is still tested, not dropped because the other account did not surface it.
 
 **3 - Confirm (deterministic).** `IdorProbe` / `ContentIdorProbe` baselines the caller's own value, then requests each candidate **as the caller**. Two confirmation signals:
 
@@ -390,6 +390,7 @@ DAST_AUTHORIZED_HOSTS=target.example   # empty = observe-only (no active probing
 | `DAST_MAX_CLICKS` | `8` | SpaIdor | Click budget shared across pages for button-gated exploration (`0` disables clicking). |
 | `DAST_EVIDENCE_FILE` | (none -> off) | all scanner mains | Path to write a JSON-Lines evidence transcript: every target HTTP request (with its injected payload, response status/headers/timing) and each XSS verdict, so a scan's work is provable and replayable. Off when unset. |
 | `DAST_REPORT_FILE` | (none -> off) | all scanner mains | Path to write a self-contained HTML report: the findings (severity, evidence, replay handle) plus the evidence transcript above, in one file you can open in a browser or share. Read-only view of output the scan already produced -- no server. Off when unset. |
+| `DAST_REMEDIATION_FILE` | (none -> off) | all scanner mains | Path to write a Markdown remediation brief: each confirmed finding rewritten as a task for a coding agent (CWE/OWASP, root cause, where to look in code, how to fix, a verify condition), carrying the same evidence and replay handle. Off when unset. |
 | `DAST_TRACE_DIR` | (none -> off) | browser-driving mains | Directory for a per-session **Playwright trace** of the authenticated browser session (screenshots, DOM snapshots, and network, per action). Open with `npx playwright show-trace <zip>` or [trace.playwright.dev](https://trace.playwright.dev) -- proof the scan really drove Chromium, useful for debugging a thin crawl. Off when unset. |
 | `DAST_VIDEO_DIR` | (none -> off) | browser-driving mains | Directory for a `.webm` **video** of each nav session. Plays in any browser with no tooling -- handy for a demo clip; the trace is richer for debugging. Off when unset. |
 | `DAST_MAX_CONCURRENCY` | `4` | global HTTP throttle | In-flight request cap against the target (backpressure). |
@@ -511,6 +512,15 @@ DAST_AUTHORIZED_HOSTS=… DAST_EVIDENCE_FILE=/tmp/ev.jsonl DAST_REPORT_FILE=/tmp
 ![Sample HTML report](docs/sample-report.png)
 
 <sub>Placeholder data - `target.example` / `victim-co.example` are reserved example domains, not a real finding.</sub>
+
+### Remediation brief
+
+Set `DAST_REMEDIATION_FILE` to also write a Markdown **remediation brief**: each confirmed finding rewritten as a task for a coding agent that has the target's source. DAST sees no source, so the brief gives no file paths - it pairs the vulnerability class with the live evidence and the model-free replay handle, then adds the CWE/OWASP mapping, root cause, where to look in code, how to fix, and a verify condition (re-running the probe should no longer confirm). It is a read-only render of findings the scan already confirmed, and off unless the variable is set.
+
+```bash
+DAST_AUTHORIZED_HOSTS=… DAST_REMEDIATION_FILE=/tmp/remediation.md \
+  sbt -batch "runMain dast.scan.SpaIdorScannerMain <url> <spec>"
+```
 
 ### Notes
 
